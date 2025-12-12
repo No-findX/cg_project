@@ -2,13 +2,13 @@
 #define BUTTON_MANAGER_HPP
 
 #include "button.hpp"
-#include "include/stb_easy_font.h"
+#include <stb_easy_font.h>
 #include <vector>
 #include <string>
 #include <iostream>
 #include <algorithm>
-#include <glm.hpp>
-#include <gtc/type_ptr.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 static const char* vertexShaderSrc = R"(
 #version 330 core

@@ -3,7 +3,7 @@
 
 #define MAX_SIZE 12
 
-#include "third_party/json.hpp"
+#include <json.hpp>
 
 #include <string>
 #include <vector>

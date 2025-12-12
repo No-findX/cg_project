@@ -32,7 +32,19 @@
     <ClInclude Include="model\include\level_loader.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="model\include\third_party\json.hpp">
+    <ClInclude Include="view\button.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="view\button_manager.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="view\game_view.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="view\uimanager.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="viewmodel\game_view_model.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
