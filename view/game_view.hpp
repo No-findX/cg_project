@@ -9,6 +9,7 @@
 #include <iostream>
 #include <cmath>
 #include <limits>
+#include <string>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -67,6 +68,9 @@ public:
     void init(int windowWidth, int windowHeight) {
         windowWidth_ = windowWidth;
         windowHeight_ = windowHeight;
+        textureWidth_ = windowWidth_;
+        textureHeight_ = windowHeight_;
+
         GLuint vert = CompileShader(GL_VERTEX_SHADER, kGameVertexShader);
         GLuint frag = CompileShader(GL_FRAGMENT_SHADER, kGameFragmentShader);
         shader_ = glCreateProgram();
@@ -97,6 +101,8 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
 
+        glGenFramebuffers(1, &fbo_);
+
         updateProjection();
     }
 
@@ -119,14 +125,100 @@ public:
 
     void render(const GameState& state, const Level& level) {
         if (shader_ == 0) return;
-        if (state.player.room < 0 || state.player.room >= static_cast<int>(level.rooms.size())) return;
+        if (level.rooms.empty()) return;
 
-        const Room& room = level.rooms[state.player.room];
+        ensureRoomTextures(level.rooms.size());
+
+        for (size_t i = 0; i < level.rooms.size(); ++i) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, roomTextures_[i], 0);
+            GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
+            glDrawBuffers(1, drawBuffers);
+
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                std::cerr << "Framebuffer not complete for room " << i << std::endl;
+            }
+
+            glViewport(0, 0, textureWidth_, textureHeight_);
+            glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            renderRoomIndex(static_cast<int>(i), state, level);
+
+            // unbind texture attachment (not strictly necessary here)
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+
+        if (state.player.room >= 0 && state.player.room < static_cast<int>(level.rooms.size())) {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, windowWidth_, windowHeight_);
+            glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            renderRoomIndex(state.player.room, state, level);
+        }
+    }
+
+    void shutdown() {
+        if (vbo_) {
+            glDeleteBuffers(1, &vbo_);
+            vbo_ = 0;
+        }
+        if (vao_) {
+            glDeleteVertexArrays(1, &vao_);
+            vao_ = 0;
+        }
+        if (shader_) {
+            glDeleteProgram(shader_);
+            shader_ = 0;
+        }
+        if (fbo_) {
+            glDeleteFramebuffers(1, &fbo_);
+            fbo_ = 0;
+        }
+        if (!roomTextures_.empty()) {
+            glDeleteTextures(static_cast<GLsizei>(roomTextures_.size()), roomTextures_.data());
+            roomTextures_.clear();
+        }
+    }
+
+private:
+    void updateProjection() {
+        const float aspect = windowHeight_ == 0 ? 1.0f : static_cast<float>(windowWidth_) / static_cast<float>(windowHeight_);
+        projection_ = glm::perspective(glm::radians(55.0f), aspect, 0.1f, 200.0f);
+    }
+
+    void ensureRoomTextures(size_t count) {
+        if (textureWidth_ != windowWidth_ || textureHeight_ != windowHeight_) {
+            textureWidth_ = windowWidth_;
+            textureHeight_ = windowHeight_;
+            if (!roomTextures_.empty()) {
+                glDeleteTextures(static_cast<GLsizei>(roomTextures_.size()), roomTextures_.data());
+                roomTextures_.clear();
+            }
+        }
+
+        while (roomTextures_.size() < count) {
+            GLuint tex = 0;
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textureWidth_, textureHeight_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            roomTextures_.push_back(tex);
+        }
+    }
+
+    void renderRoomIndex(int roomId, const GameState& state, const Level& level) {
+        if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
+        const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
         vertexData_.clear();
-        // appendRoomGeometry no longer sets camera target to player; it returns room half extent
-        currentRoomHalfExtent_ = appendRoomGeometry(room, state.player.room, state, tileWorldSize_);
+        currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, tileWorldSize_);
 
         // compute orientation from discrete yaw/pitch
         glm::vec3 front;
@@ -148,16 +240,11 @@ public:
         // Room center in world coordinates is origin (0, 0, 0) in this scheme.
         glm::vec3 roomCenter = glm::vec3(0.0f, 0.02f, 0.0f); // small target height
 
-        // Place camera above the room edge corresponding to the current yaw.
-        // offsetDir points from room center toward the camera position (i.e., opposite of view direction projected to XZ).
         glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
-        // Position camera on the room edge (at distance = currentRoomHalfExtent_ from center),
-        // then raise it by eyeHeightOffset_ to get a 2.5D oblique view.
         glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
 
-        // Look at the room center (not the player)
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
         if (vertexData_.empty()) return;
@@ -173,27 +260,6 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
         glUseProgram(0);
-    }
-
-    void shutdown() {
-        if (vbo_) {
-            glDeleteBuffers(1, &vbo_);
-            vbo_ = 0;
-        }
-        if (vao_) {
-            glDeleteVertexArrays(1, &vao_);
-            vao_ = 0;
-        }
-        if (shader_) {
-            glDeleteProgram(shader_);
-            shader_ = 0;
-        }
-    }
-
-private:
-    void updateProjection() {
-        const float aspect = windowHeight_ == 0 ? 1.0f : static_cast<float>(windowWidth_) / static_cast<float>(windowHeight_);
-        projection_ = glm::perspective(glm::radians(55.0f), aspect, 0.1f, 200.0f);
     }
 
     // build geometry; DO NOT update camera target here (camera now targets room center).
@@ -351,6 +417,11 @@ private:
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
     GLuint shader_ = 0;
+    GLuint fbo_ = 0;
+    std::vector<GLuint> roomTextures_;
+    int textureWidth_ = 0;
+    int textureHeight_ = 0;
+
     glm::mat4 projection_ = glm::mat4(1.0f);
     glm::mat4 view_ = glm::mat4(1.0f);
     int windowWidth_ = 0;
