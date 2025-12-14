@@ -100,43 +100,35 @@ public:
         updateProjection();
     }
 
-    /// Update yaw/pitch in response to mouse deltas while clamping to avoid flips.
-    void rotateCamera(float deltaX, float deltaY) {
-        const float sensitivity = 0.15f;
-        cameraYaw_ += deltaX * sensitivity;
-        cameraPitch_ -= deltaY * sensitivity;
-        if (cameraYaw_ > 360.0f) {
-            cameraYaw_ -= 360.0f;
-        } else if (cameraYaw_ < -360.0f) {
-            cameraYaw_ += 360.0f;
-        }
-        cameraPitch_ = std::clamp(cameraPitch_, -80.0f, 80.0f);
+    // no-op: remove mouse-drag free rotation for 2.5D style
+    void rotateCamera(float /*deltaX*/, float /*deltaY*/) {
     }
 
-    /// Translate player input (WASD) to world-aligned directions based on camera yaw.
+    // rotate camera yaw in 90бу steps; position will be recomputed in render
+    void rotateCameraBy90(bool left) {
+        const float step = left ? -90.0f : 90.0f;
+        cameraYaw_ += step;
+        if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
+        else if (cameraYaw_ < -360.0f) cameraYaw_ += 360.0f;
+        cameraPitch_ = fixedPitch_;
+    }
+
     Input remapInputForCamera(Input input) const {
         return mapCameraRelativeInput(input);
     }
 
-    /// Gather geometry for visible rooms and submit draw calls using current camera.
     void render(const GameState& state, const Level& level) {
-        if (shader_ == 0) {
-            return;
-        }
-
-        if (state.player.room < 0 || state.player.room >= static_cast<int>(level.rooms.size())) {
-            return;
-        }
+        if (shader_ == 0) return;
+        if (state.player.room < 0 || state.player.room >= static_cast<int>(level.rooms.size())) return;
 
         const Room& room = level.rooms[state.player.room];
-        if (room.size <= 0) {
-            return;
-        }
+        if (room.size <= 0) return;
 
         vertexData_.clear();
+        // appendRoomGeometry no longer sets camera target to player; it returns room half extent
         currentRoomHalfExtent_ = appendRoomGeometry(room, state.player.room, state, tileWorldSize_);
-        glm::vec3 cameraPos = playerEyePosition_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
 
+        // compute orientation from discrete yaw/pitch
         glm::vec3 front;
         float yawRad = glm::radians(cameraYaw_);
         float pitchRad = glm::radians(cameraPitch_);
@@ -144,18 +136,31 @@ public:
         front.y = std::sin(pitchRad);
         front.z = std::cos(pitchRad) * std::sin(yawRad);
         front = glm::normalize(front);
+
+        // forward projected to XZ for input mapping
         cameraForward2D_ = glm::vec2(front.x, front.z);
         if (glm::dot(cameraForward2D_, cameraForward2D_) > 1e-5f) {
             cameraForward2D_ = glm::normalize(cameraForward2D_);
         } else {
-            cameraForward2D_ = glm::vec2(0.0f, -1.0f);
+            cameraForward2D_ = glm::vec2(1.0f, 0.0f); // default +X
         }
 
-        view_ = glm::lookAt(cameraPos, cameraPos + front, glm::vec3(0.0f, 1.0f, 0.0f));
+        // Room center in world coordinates is origin (0, 0, 0) in this scheme.
+        glm::vec3 roomCenter = glm::vec3(0.0f, 0.02f, 0.0f); // small target height
 
-        if (vertexData_.empty()) {
-            return;
-        }
+        // Place camera above the room edge corresponding to the current yaw.
+        // offsetDir points from room center toward the camera position (i.e., opposite of view direction projected to XZ).
+        glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
+        glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
+
+        // Position camera on the room edge (at distance = currentRoomHalfExtent_ from center),
+        // then raise it by eyeHeightOffset_ to get a 2.5D oblique view.
+        glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
+
+        // Look at the room center (not the player)
+        view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        if (vertexData_.empty()) return;
 
         glUseProgram(shader_);
         glUniformMatrix4fv(glGetUniformLocation(shader_, "view"), 1, GL_FALSE, glm::value_ptr(view_));
@@ -170,7 +175,6 @@ public:
         glUseProgram(0);
     }
 
-    /// Release GL resources so repeated init/shutdown are safe.
     void shutdown() {
         if (vbo_) {
             glDeleteBuffers(1, &vbo_);
@@ -187,17 +191,18 @@ public:
     }
 
 private:
-    /// Rebuild projection when the window changes (perspective for pseudo-3D feel).
     void updateProjection() {
         const float aspect = windowHeight_ == 0 ? 1.0f : static_cast<float>(windowWidth_) / static_cast<float>(windowHeight_);
         projection_ = glm::perspective(glm::radians(55.0f), aspect, 0.1f, 200.0f);
     }
 
-    /// Convert a top-down room definition into extruded tiles/columns. Returns half extent.
+    // build geometry; DO NOT update camera target here (camera now targets room center).
     float appendRoomGeometry(const Room& room, int roomId, const GameState& state, float tileSize) {
         const int tileCount = room.size;
         const float boardHalf = tileCount * tileSize * 0.5f;
-        playerEyePosition_ = glm::vec3(0.0f, 0.05f, 0.0f);
+
+        // keep a stable look-at target at room center (not player's cell)
+        playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
         auto pushQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
             pushVertex(v0, color);
@@ -256,18 +261,13 @@ private:
         }
 
         auto drawOccupant = [&](const Pos& pos, const glm::vec3& color, float height, bool isPlayer) {
-            if (pos.room != roomId) {
-                return;
-            }
+            if (pos.room != roomId) return;
             auto bounds = boundsForCell(pos.x, pos.y);
             const float inset = tileSize * 0.2f;
-            if (isPlayer) {
-                const float centerX = 0.5f * (bounds[0] + bounds[1]);
-                const float centerZ = 0.5f * (bounds[2] + bounds[3]);
-                playerEyePosition_ = glm::vec3(centerX, 0.05f, centerZ);
-                if (hidePlayerMesh_) {
-                    return;
-                }
+
+            // Do not move camera target when drawing player; camera is room-edge based
+            if (isPlayer && hidePlayerMesh_) {
+                return;
             }
 
             appendColumn(bounds[0] + inset, bounds[1] - inset, bounds[2] + inset, bounds[3] - inset,
@@ -282,7 +282,6 @@ private:
         return boardHalf;
     }
 
-    /// Map textual tiles to base colors for the 3D renderer.
     glm::vec3 tileColorForCell(const std::string& cell) const {
         if (cell == "#") return {0.2f, 0.2f, 0.2f};
         if (cell == "=") return {0.25f, 0.6f, 0.3f};
@@ -291,7 +290,6 @@ private:
         return {0.15f, 0.15f, 0.15f};
     }
 
-    /// Helper to push a colored vertex into the dynamic buffer.
     void pushVertex(const glm::vec3& pos, const glm::vec3& color) {
         vertexData_.push_back(pos.x);
         vertexData_.push_back(pos.y);
@@ -301,15 +299,18 @@ private:
         vertexData_.push_back(color.b);
     }
 
-    /// Determine which grid direction best matches the requested input given camera yaw.
     Input mapCameraRelativeInput(Input input) const {
-        glm::vec2 forward = cameraForward2D_;
+        glm::vec2 forward;
+        {
+            float yawRad = glm::radians(cameraYaw_);
+            forward = glm::vec2(std::cos(yawRad), std::sin(yawRad)); // X, Z
+        }
         if (glm::dot(forward, forward) < 1e-5f) {
-            forward = glm::vec2(0.0f, -1.0f);
+            forward = glm::vec2(1.0f, 0.0f); // +X default
         }
 
         auto chooseCardinal = [&](const glm::vec2& dir) {
-            glm::vec2 norm = glm::dot(dir, dir) < 1e-6f ? glm::vec2(0.0f, -1.0f) : glm::normalize(dir);
+            glm::vec2 norm = glm::dot(dir, dir) < 1e-6f ? glm::vec2(1.0f, 0.0f) : glm::normalize(dir);
             struct Candidate {
                 glm::vec2 vec;
                 Input input;
@@ -356,54 +357,46 @@ private:
     int windowHeight_ = 0;
     std::vector<float> vertexData_;
 
-    float cameraYaw_ = -90.0f;
-    float cameraPitch_ = 0.0f;
+    // 2.5D discrete camera: yaw snaps in 90бу steps; pitch fixed.
+    float cameraYaw_ = 0.0f;                // 0 -> +X
+    float cameraPitch_ = -45.0f;            // fixed downward pitch
+    const float fixedPitch_ = -45.0f;
     float currentRoomHalfExtent_ = 5.0f;
-    glm::vec3 playerEyePosition_{0.0f, 0.05f, 0.0f};
-    glm::vec2 cameraForward2D_{0.0f, -1.0f};
+    glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f}; // now used as room-center target
+    glm::vec2 cameraForward2D_{1.0f, 0.0f}; // initially +X
     const float tileWorldSize_ = 1.0f;
     const float wallHeight_ = 0.5f;
-    const float eyeHeightOffset_ = 0.55f;
-    const bool hidePlayerMesh_ = true;
+    const float eyeHeightOffset_ = 3.0f;
+    const bool hidePlayerMesh_ = false;
 };
 
 } // namespace detail
 
-/// High level view facade handling UI/menu overlay plus in-game rendering.
 class GameView {
 public:
-    /// Prepare UI + renderer subsystems once.
     bool init(int width, int height) {
-        if (initialized_) {
-            return true;
-        }
+        if (initialized_) return true;
         uiManager_.init(width, height);
         renderer_.init(width, height);
         initialized_ = true;
         return true;
     }
 
-    /// Provide callback triggered when UI start button is pressed.
     void setStartCallback(std::function<void()> callback) {
         startCallback_ = std::move(callback);
         uiManager_.setStartGameCallback(startCallback_);
     }
 
-    /// Toggle between menu overlay and gameplay rendering.
     void setGameSceneVisible(bool visible) {
         showGameScene_ = visible;
     }
 
-    /// Release renderer resources (UI has trivial lifetime).
     void shutdown() {
-        if (!initialized_) {
-            return;
-        }
+        if (!initialized_) return;
         renderer_.shutdown();
         initialized_ = false;
     }
 
-    /// Render either the 3D view or fallback UI menu when no game is displayed.
     void render(const GameState* state, const Level* level) {
         bool renderedScene = false;
         if (showGameScene_ && state && level) {
@@ -415,20 +408,13 @@ public:
         }
     }
 
-    /// Remap inputs only when the 3D renderer is active.
     Input remapInputForCamera(Input input) const {
-        if (!showGameScene_) {
-            return input;
-        }
+        if (!showGameScene_) return input;
         return renderer_.remapInputForCamera(input);
     }
 
-    /// Route mouse deltas either to camera orbit or UI hover logic.
     void handleMouseMove(float x, float y) {
         if (showGameScene_) {
-            if (rotatingCamera_) {
-                renderer_.rotateCamera(x - lastMouseX_, y - lastMouseY_);
-            }
             lastMouseX_ = x;
             lastMouseY_ = y;
         } else {
@@ -436,21 +422,19 @@ public:
         }
     }
 
-    /// Start/stop camera rotation on right-click while preserving UI click handling.
     void handleMouseButton(int button, int action, float x, float y) {
         if (showGameScene_) {
-            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                if (action == GLFW_PRESS) {
-                    rotatingCamera_ = true;
-                    lastMouseX_ = x;
-                    lastMouseY_ = y;
-                } else if (action == GLFW_RELEASE) {
-                    rotatingCamera_ = false;
-                }
-            }
+            (void)button; (void)action; (void)x; (void)y;
         } else {
             uiManager_.handleMouseClick(button, action, x, y);
         }
+    }
+
+    // call from GLFW key callback: left/right arrows rotate camera 90бу and camera position updates next render
+    void handleKey(int key) {
+        if (!showGameScene_) return;
+        if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true);
+        else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false);
     }
 
 private:
@@ -459,7 +443,6 @@ private:
     bool initialized_ = false;
     bool showGameScene_ = false;
     std::function<void()> startCallback_;
-    bool rotatingCamera_ = false;
     float lastMouseX_ = 0.0f;
     float lastMouseY_ = 0.0f;
 };
