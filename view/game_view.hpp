@@ -111,12 +111,30 @@ public:
     }
 
     // rotate camera yaw in 90° steps; position will be recomputed in render
-    void rotateCameraBy90(bool left) {
+    void rotateCameraBy90(bool left, float rotationtime = 0.0) {
+        // 如果当前有旋转动画在进行，先将当前角度作为新的起点，继续下一次 90° 动画
         const float step = left ? -90.0f : 90.0f;
-        cameraYaw_ += step;
-        if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
-        else if (cameraYaw_ < -360.0f) cameraYaw_ += 360.0f;
-        cameraPitch_ = fixedPitch_;
+
+        if (rotationtime == 0.0f) {
+            // 立即跳转
+            cameraYaw_ += step;
+            if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
+            else if (cameraYaw_ < -360.0f) cameraYaw_ += 360.0f;
+            cameraPitch_ = fixedPitch_;
+            rotating_ = false;
+        } else {
+            // 启动平滑旋转动画
+            rotateStartYaw_ = cameraYaw_;
+            rotateTargetYaw_ = cameraYaw_ + step;
+            // 归一化目标角到合理范围（保持输入映射稳定）
+            if (rotateTargetYaw_ > 360.0f) rotateTargetYaw_ -= 360.0f;
+            else if (rotateTargetYaw_ < -360.0f) rotateTargetYaw_ += 360.0f;
+
+            rotateDuration_ = rotationtime;
+            rotateStartTime_ = static_cast<float>(glfwGetTime());
+            rotating_ = true;
+            cameraPitch_ = fixedPitch_;
+        }
     }
 
     Input remapInputForCamera(Input input) const {
@@ -126,6 +144,53 @@ public:
     void render(const GameState& state, const Level& level) {
         if (shader_ == 0) return;
         if (level.rooms.empty()) return;
+
+        // 推进摄像机旋转动画（如果在进行中）
+        if (rotating_) {
+            const float now = static_cast<float>(glfwGetTime());
+            float elapsed = now - rotateStartTime_;
+            if (elapsed >= rotateDuration_) {
+                cameraYaw_ = rotateTargetYaw_;
+                rotating_ = false;
+            } else {
+                // 三次贝塞尔控制点（角度-时间域）
+                // P0 = (0°, 0), P1 = (0°, t*duration), P2 = (90°, (1-t)*duration), P3 = (90°, duration)
+                const float d = rotateDuration_;
+                const float t = bezierT_; // 对称，默认 0.5
+                const float p0x = 0.0f, p0y = 0.0f;
+                const float p1x = 0.0f, p1y = t * d;
+                const float p2x = 90.0f, p2y = (1.0f - t) * d;
+                const float p3x = 90.0f, p3y = d;
+
+                auto bezier = [](float u, float a0, float a1, float a2, float a3) {
+                    float omu = 1.0f - u;
+                    return omu * omu * omu * a0
+                         + 3.0f * omu * omu * u * a1
+                         + 3.0f * omu * u * u * a2
+                         + u * u * u * a3;
+                };
+
+                // 已知时间 y=elapsed，反解参数 u，使得 B_y(u) = elapsed
+                // 使用二分法求解 u ∈ [0,1]，时间域是单调递增，保证稳定性
+                float uLo = 0.0f, uHi = 1.0f;
+                for (int i = 0; i < 20; ++i) {
+                    float uMid = 0.5f * (uLo + uHi);
+                    float yMid = bezier(uMid, p0y, p1y, p2y, p3y);
+                    if (yMid < elapsed) uLo = uMid;
+                    else uHi = uMid;
+                }
+                float u = 0.5f * (uLo + uHi);
+
+                // 用同一 u 计算角度轴的进度（0°->90°）
+                float xDeg = bezier(u, p0x, p1x, p2x, p3x); // 0 到 90
+                float direction = (rotateTargetYaw_ >= rotateStartYaw_) ? 1.0f : -1.0f;
+                cameraYaw_ = rotateStartYaw_ + direction * xDeg;
+
+                // 规范化，避免累计漂移
+                if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
+                else if (cameraYaw_ < -360.0f) cameraYaw_ += 360.0f;
+            }
+        }
 
         ensureRoomTextures(level.rooms.size());
 
@@ -145,7 +210,6 @@ public:
 
             renderRoomIndex(static_cast<int>(i), state, level);
 
-            // unbind texture attachment (not strictly necessary here)
             glBindTexture(GL_TEXTURE_2D, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
@@ -220,7 +284,6 @@ private:
         vertexData_.clear();
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, tileWorldSize_);
 
-        // compute orientation from discrete yaw/pitch
         glm::vec3 front;
         float yawRad = glm::radians(cameraYaw_);
         float pitchRad = glm::radians(cameraPitch_);
@@ -229,22 +292,18 @@ private:
         front.z = std::cos(pitchRad) * std::sin(yawRad);
         front = glm::normalize(front);
 
-        // forward projected to XZ for input mapping
         cameraForward2D_ = glm::vec2(front.x, front.z);
         if (glm::dot(cameraForward2D_, cameraForward2D_) > 1e-5f) {
             cameraForward2D_ = glm::normalize(cameraForward2D_);
         } else {
-            cameraForward2D_ = glm::vec2(1.0f, 0.0f); // default +X
+            cameraForward2D_ = glm::vec2(1.0f, 0.0f);
         }
 
-        // Room center in world coordinates is origin (0, 0, 0) in this scheme.
-        glm::vec3 roomCenter = glm::vec3(0.0f, 0.02f, 0.0f); // small target height
-
+        glm::vec3 roomCenter = glm::vec3(0.0f, 0.02f, 0.0f);
         glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
         glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
-
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
         if (vertexData_.empty()) return;
@@ -262,12 +321,10 @@ private:
         glUseProgram(0);
     }
 
-    // build geometry; DO NOT update camera target here (camera now targets room center).
     float appendRoomGeometry(const Room& room, int roomId, const GameState& state, float tileSize) {
         const int tileCount = room.size;
         const float boardHalf = tileCount * tileSize * 0.5f;
 
-        // keep a stable look-at target at room center (not player's cell)
         playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
         auto pushQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
@@ -331,7 +388,6 @@ private:
             auto bounds = boundsForCell(pos.x, pos.y);
             const float inset = tileSize * 0.2f;
 
-            // Do not move camera target when drawing player; camera is room-edge based
             if (isPlayer && hidePlayerMesh_) {
                 return;
             }
@@ -369,10 +425,10 @@ private:
         glm::vec2 forward;
         {
             float yawRad = glm::radians(cameraYaw_);
-            forward = glm::vec2(std::cos(yawRad), std::sin(yawRad)); // X, Z
+            forward = glm::vec2(std::cos(yawRad), std::sin(yawRad));
         }
         if (glm::dot(forward, forward) < 1e-5f) {
-            forward = glm::vec2(1.0f, 0.0f); // +X default
+            forward = glm::vec2(1.0f, 0.0f);
         }
 
         auto chooseCardinal = [&](const glm::vec2& dir) {
@@ -414,6 +470,7 @@ private:
         }
     }
 
+    // GL 资源
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
     GLuint shader_ = 0;
@@ -422,23 +479,32 @@ private:
     int textureWidth_ = 0;
     int textureHeight_ = 0;
 
+    // 矩阵与窗口
     glm::mat4 projection_ = glm::mat4(1.0f);
     glm::mat4 view_ = glm::mat4(1.0f);
     int windowWidth_ = 0;
     int windowHeight_ = 0;
     std::vector<float> vertexData_;
 
-    // 2.5D discrete camera: yaw snaps in 90° steps; pitch fixed.
+    // 2.5D 离散相机
     float cameraYaw_ = 0.0f;                // 0 -> +X
-    float cameraPitch_ = -45.0f;            // fixed downward pitch
+    float cameraPitch_ = -45.0f;            // 固定俯仰
     const float fixedPitch_ = -45.0f;
     float currentRoomHalfExtent_ = 5.0f;
-    glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f}; // now used as room-center target
-    glm::vec2 cameraForward2D_{1.0f, 0.0f}; // initially +X
+    glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f};
+    glm::vec2 cameraForward2D_{1.0f, 0.0f};
     const float tileWorldSize_ = 1.0f;
     const float wallHeight_ = 0.5f;
     const float eyeHeightOffset_ = 3.0f;
     const bool hidePlayerMesh_ = false;
+
+    // 旋转动画状态
+    bool rotating_ = false;
+    float rotateStartYaw_ = 0.0f;
+    float rotateTargetYaw_ = 0.0f;
+    float rotateDuration_ = 0.0f;
+    float rotateStartTime_ = 0.0f;
+    float bezierT_ = 0.5f; // 对称控制点比例 t
 };
 
 } // namespace detail
@@ -504,8 +570,8 @@ public:
     // call from GLFW key callback: left/right arrows rotate camera 90° and camera position updates next render
     void handleKey(int key) {
         if (!showGameScene_) return;
-        if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true);
-        else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false);
+        if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true, 0.5);
+        else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
     }
 
 private:

@@ -42,7 +42,7 @@ private:
 
     double lastFrameTime_ = 0.0;       // Timestamp of previous frame (for delta time).
     double lastInputTime_ = 0.0;       // Timestamp of last processed input (throttling).
-    const double inputCooldown_ = 0.15; // Minimum time between accepted inputs.
+    const double inputCooldown_ = 0.5; // Minimum time between accepted inputs.
     bool winAnnounced_ = false;        // Tracks whether win message was printed.
     bool gameStarted_ = false;         // Gated until the Start button is clicked.
 
