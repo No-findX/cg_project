@@ -163,25 +163,44 @@ void GameApplication::processInput() {
     }
 
     Input input = UP;
+    int viewRotate = GLFW_KEY_U;
     bool hasInput = false;
+    bool operateAction = false;
 
     if (glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS) {
         input = UP;
         hasInput = true;
+        operateAction = true;
     } else if (glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS) {
         input = DOWN;
         hasInput = true;
+        operateAction = true;
     } else if (glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_LEFT) == GLFW_PRESS) {
         input = LEFT;
         hasInput = true;
+        operateAction = true;
     } else if (glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS || glfwGetKey(window_, GLFW_KEY_RIGHT) == GLFW_PRESS) {
         input = RIGHT;
+        hasInput = true;
+        operateAction = true;
+    }
+
+    if (glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS) {
+        viewRotate = GLFW_KEY_U;
+        hasInput = true;
+    }
+    else if (glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS) {
+        viewRotate = GLFW_KEY_I;
         hasInput = true;
     }
 
     if (hasInput) {
-        input = view_.remapInputForCamera(input);
-        viewModel_.handleInput(input);
+        if (operateAction) {
+            input = view_.remapInputForCamera(input);
+            viewModel_.handleInput(input);
+        } else {
+            view_.handleKey(viewRotate);
+        }
         lastInputTime_ = now;
     }
 }
