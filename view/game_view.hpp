@@ -110,9 +110,14 @@ public:
     void rotateCamera(float /*deltaX*/, float /*deltaY*/) {
     }
 
-    // rotate camera yaw in 90° steps; position will be recomputed in render
+    // 旋转时拒绝新的旋转请求，避免角度漂移
     void rotateCameraBy90(bool left, float rotationtime = 0.0) {
         const float step = left ? -90.0f : 90.0f;
+
+        // 若正在旋转，则忽略新的旋转输入（输入锁定）
+        if (rotating_) {
+            return;
+        }
 
         if (rotationtime == 0.0f) {
             if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
@@ -135,13 +140,20 @@ public:
 
     // 开始一次位移动画（用于玩家/箱子推进）
     void beginMoveAnimation(float duration) {
-        moveDuration_ = duration;
+        // 缩短时长以提升轻快感，若调用者提供更长时长，可按调用者值
+        const float preferred = 0.3f;
+        moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
         moveStartTime_ = static_cast<float>(glfwGetTime());
         moving_ = true;
     }
-
+        
     Input remapInputForCamera(Input input) const {
         return mapCameraRelativeInput(input);
+    }
+
+    // 查询当前是否处于相机旋转中（供输入层加锁）
+    bool isRotating() const {
+        return rotating_;
     }
 
     void render(const GameState& state, const Level& level, const GameState& next_state) {
@@ -165,7 +177,7 @@ public:
             }
         }
 
-        // 位移动画时间参数
+        // 位移动画时间参数（匀加速-匀速-匀减速）
         float moveT = 1.0f;
         if (moving_) {
             const float now = static_cast<float>(glfwGetTime());
@@ -177,8 +189,37 @@ public:
                 float u = elapsed / moveDuration_;
                 if (u < 0.0f) u = 0.0f;
                 if (u > 1.0f) u = 1.0f;
-                // 与相机一致使用 smoothstep
-                moveT = u * u * (3.0f - 2.0f * u);
+
+                // 速度梯形：前 20% 加速，后 20% 减速，中间匀速
+                const float acc = 0.2f;
+                const float dec = 0.2f;
+                const float constv = 1.0f - acc - dec; // 0.6
+                // 归一化最大速度，使总位移为 1
+                // 加速段距离 s1 = 0.5*a*vmax, 减速段同 s3 = 0.5*d*vmax, 匀速段 s2 = constv*vmax
+                // s1+s2+s3 = (0.5*(acc+dec)+constv)*vmax = 1 => vmax = 1 / (constv + 0.5f*(acc+dec))
+                const float vmax = 1.0f / (constv + 0.5f * (acc + dec));
+
+                if (u <= acc) {
+                    // s = 0.5*a*(u/acc)^2 * vmax*acc 直接用匀加速：s = 0.5 * aAcc * t^2
+                    // 以归一化时间 u，在加速段位移为 0.5 * vmax/acc * u^2
+                    moveT = 0.5f * (vmax / acc) * u * u;
+                } else if (u <= acc + constv) {
+                    // 到达加速段末位移
+                    const float s_acc = 0.5f * vmax * acc;
+                    // 匀速段：s = vmax * (u - acc)
+                    moveT = s_acc + vmax * (u - acc);
+                } else {
+                    // 进入减速段
+                    const float s_acc = 0.5f * vmax * acc;
+                    const float s_const = vmax * constv;
+                    float ud = u - (acc + constv); // 减速段经历的归一化时间
+                    // 减速段位移：s = vmax*ud - 0.5*(vmax/dec)*ud^2
+                    moveT = s_acc + s_const + vmax * ud - 0.5f * (vmax / dec) * ud * ud;
+                }
+
+                // 保护
+                if (moveT < 0.0f) moveT = 0.0f;
+                if (moveT > 1.0f) moveT = 1.0f;
             }
         }
 
@@ -294,7 +335,7 @@ private:
         glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
-        glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
+        glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
         if (vertexData_.empty()) return;
@@ -368,7 +409,7 @@ private:
         };
 
         auto drawAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height) {
-            const float inset = tileSize * 0.2f;
+            const float inset = tileSize * 0.02f;
             const float halfW = (tileSize * 0.5f) - inset;
             float minX = centerXZ.x - halfW;
             float maxX = centerXZ.x + halfW;
@@ -395,7 +436,7 @@ private:
             const Pos& s = state.player;
             const Pos& e = next_state.player;
             glm::vec3 color(0.25f, 0.85f, 0.35f);
-            float height = 0.45f;
+            float height = 0.96f;
 
             if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
                 glm::vec2 cs = centerForCell(s.x, s.y);
@@ -414,15 +455,14 @@ private:
         };
 
         // 计算箱子插值
-        auto drawBoxes = [&]() {
-            for (const auto& kv : state.boxes) {
+        auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color) {
+            for (const auto& kv : boxes) {
                 int id = kv.first;
                 const Pos& s = kv.second;
-                glm::vec3 color(0.85f, 0.55f, 0.2f);
-                float height = 0.35f;
+                float height = 0.96f;
 
-                auto it = next_state.boxes.find(id);
-                if (it != next_state.boxes.end()) {
+                auto it = next_boxes.find(id);
+                if (it != next_boxes.end()) {
                     const Pos& e = it->second;
 
                     if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
@@ -454,7 +494,8 @@ private:
             }
         };
 
-        drawBoxes();
+        drawBoxes(state.boxes, next_state.boxes, glm::vec3(0.85f, 0.55f, 0.2f));
+        drawBoxes(state.boxrooms, next_state.boxrooms, glm::vec3(0.4f, 0.35f, 0.7f));
         // 玩家最后绘制，避免被箱子遮挡
         drawPlayer();
 
@@ -465,7 +506,6 @@ private:
         if (cell == "#") return {0.2f, 0.2f, 0.2f};
         if (cell == "=") return {0.25f, 0.6f, 0.3f};
         if (cell == "_") return {0.7f, 0.6f, 0.25f};
-        if (!cell.empty() && std::isdigit(static_cast<unsigned char>(cell[0]))) return {0.4f, 0.35f, 0.7f};
         return {0.15f, 0.15f, 0.15f};
     }
 
@@ -551,7 +591,7 @@ private:
     glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f};
     glm::vec2 cameraForward2D_{1.0f, 0.0f};
     const float tileWorldSize_ = 1.0f;
-    const float wallHeight_ = 0.5f;
+    const float wallHeight_ = 1.0f;
     const float eyeHeightOffset_ = 3.0f;
     const bool hidePlayerMesh_ = false;
 
@@ -633,6 +673,10 @@ public:
     // call from GLFW key callback: left/right arrows rotate camera 90° and camera position updates next render
     void handleKey(int key) {
         if (!showGameScene_) return;
+
+        // 若相机正在旋转，忽略新的旋转输入
+        if (renderer_.isRotating()) return;
+
         if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true, 0.5);
         else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
     }
@@ -641,6 +685,11 @@ public:
     void beginMoveAnimation(float duration) {
         if (!showGameScene_) return;
         renderer_.beginMoveAnimation(duration);
+    }
+
+    // 新增：查询相机是否处于旋转中（用于输入加锁）
+    bool isCameraRotating() const {
+        return renderer_.isRotating();
     }
 
 private:
