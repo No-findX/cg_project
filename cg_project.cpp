@@ -193,6 +193,12 @@ void GameApplication::update() {
         return;
     }
 
+    // Advance model time to allow continuous moves to progress
+    double now = glfwGetTime();
+    static double lastUpdateTime = now;
+    double dt = now - lastUpdateTime;
+    lastUpdateTime = now;
+    viewModel_.tick(dt);
     viewModel_.update();
 
     if (viewModel_.hasGame()) {

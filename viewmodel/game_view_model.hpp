@@ -82,7 +82,9 @@ public:
             return;
         }
         gameplay_->operate(input);
-        gameplay_->updateState();
+        // When operate starts a continuous move, do not force commit here.
+        // Caller should rely on tick() to advance and commit.
+        // For tools/tests that expect immediate commit, updateState can be called explicitly.
         winState_ = gameplay_->getCurrState().is_win;
     }
 
@@ -94,9 +96,25 @@ public:
         winState_ = gameplay_->getCurrState().is_win;
     }
 
+    // Advance model simulation by dt seconds (for continuous moves)
+    void tick(double dt) {
+        if (gameplay_) gameplay_->tick(dt);
+    }
+
+    // Query model move duration so view/renderer can sync visuals
+    double getMoveDuration() const {
+        return gameplay_ ? gameplay_->getMoveDuration() : 0.0;
+    }
+
     GameState getState() const {
         if (!gameplay_) {
             return GameState{};
+        }
+        // If the gameplay is currently performing a continuous move, expose
+        // the nextState so the renderer can detect the target tile and start
+        // visual interpolation. Otherwise return the committed current state.
+        if (gameplay_->isMoving()) {
+            return gameplay_->getNextState();
         }
         return gameplay_->getCurrState();
     }

@@ -6,6 +6,7 @@
 #include <vector>
 #include <optional>
 #include <map>
+#include <glm/glm.hpp>
 
 /// @brief Position of a character (player/box) in the game world
 /// @details Represents a 3D coordinate system where characters can exist in different rooms
@@ -28,6 +29,13 @@ struct GameState
     std::map<int, Pos> boxrooms;               ///< Positions of all box rooms (room_id -> position)
     std::optional<Pos> portal_just_passed;    ///< Portal position if player just used one (for rendering)
     bool is_win;                              ///< True if the player has won the game
+    // Continuous world-space position used for rendering smoothing.
+    glm::vec3 player_world_pos{0.0f, 0.05f, 0.0f};
+    // Fields used to support visual interpolation of player movement.
+    // When no move is in progress, move_progress == 1.0 and move_from == move_to == player.
+    double move_progress = 1.0;
+    Pos move_from{0,0,0};
+    Pos move_to{0,0,0};
 };
 
 /// @brief Player input directions for movement
@@ -71,6 +79,21 @@ public:
     /// @param input Player's move direction (UP/DOWN/LEFT/RIGHT)
     void operate(Input input);
 
+    /// @brief Advance any in-progress movement by dt seconds. When a pending
+    /// movement completes this will commit nextState into currState.
+    void tick(double dt);
+
+    /// @brief True if a discrete move is currently in progress and will be
+    /// committed after tick reaches completion.
+    bool isMoving() const;
+    double getMoveDuration() const;
+    /// Normalized progress of the current move in range [0,1]. Returns 1.0 when not moving.
+    double getMoveProgress() const;
+
+    /// Positions involved in the in-progress move (valid when isMoving() returns true).
+    Pos getMoveFrom() const;
+    Pos getMoveTo() const;
+
     /// @brief Apply the pending state changes and make them current
     /// @details Replaces current state with next state and clears the next state
     void updateState();
@@ -81,9 +104,17 @@ private:
     GameState currState;                       ///< Current state of the game
     GameState nextState;                       ///< Next state after operations are applied
 
+    // Continuous movement state (logic-level): when true, a discrete move has
+    // been initiated and will be committed when tick() advances progress to 1.0.
+    bool moving_ = false;
+    double moveProgress_ = 0.0;   // seconds elapsed since start of move
+    double moveDuration_ = 0.9;   // seconds that a logical move takes to complete (increased for smoother motion)
+    Pos moveFrom_;                 // grid position at start of in-progress move
+    Pos moveTo_;                   // grid target position for in-progress move
+
 
     CellType getCellType(Pos cell_pos);
     CellType operateMove(CellType object_to_move, Pos object_curr_pos, Input move);
 };
 
-#endif
+#endif#endif

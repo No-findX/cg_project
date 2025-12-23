@@ -15,6 +15,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include "model/include/gameplay.hpp"
@@ -134,9 +135,27 @@ public:
         }
 
         vertexData_.clear();
-        currentRoomHalfExtent_ = appendRoomGeometry(room, state.player.room, state, tileWorldSize_);
-        glm::vec3 cameraPos = playerEyePosition_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
 
+        const int tileCount = room.size;
+
+        // Use movement progress provided by GameState (set by GamePlay) so
+        // visual interpolation exactly follows logic timing.
+        auto gridToWorld = [&](int gx, int gy) {
+            const int tc = room.size;
+            float boardHalf = tc * tileWorldSize_ * 0.5f;
+            float wx = -boardHalf + gx * tileWorldSize_ + 0.5f * tileWorldSize_;
+            float wz = boardHalf - gy * tileWorldSize_ - 0.5f * tileWorldSize_;
+            return glm::vec3(wx, 0.05f, wz);
+        };
+
+        glm::vec3 from = gridToWorld(state.move_from.x, state.move_from.y);
+        glm::vec3 to = gridToWorld(state.move_to.x, state.move_to.y);
+        float prog = static_cast<float>(state.move_progress);
+        prog = std::clamp(prog, 0.0f, 1.0f);
+        float t = prog * prog * (3.0f - 2.0f * prog); // smoothstep
+        visualPlayerWorldPos_ = glm::mix(from, to, t);
+
+        // Compute camera orientation from yaw/pitch and build view matrix.
         glm::vec3 front;
         float yawRad = glm::radians(cameraYaw_);
         float pitchRad = glm::radians(cameraPitch_);
@@ -151,10 +170,15 @@ public:
             cameraForward2D_ = glm::vec2(0.0f, -1.0f);
         }
 
+        glm::vec3 cameraPos = visualPlayerWorldPos_ + glm::vec3(0.0f, eyeHeightOffset_, 0.0f);
         view_ = glm::lookAt(cameraPos, cameraPos + front, glm::vec3(0.0f, 1.0f, 0.0f));
 
+        if (tileCount > 0) {
+            currentRoomHalfExtent_ = appendRoomGeometry(room, state.player.room, state, tileWorldSize_);
+        }
+
         if (vertexData_.empty()) {
-            return;
+            // No 3D geometry to draw (shouldn't happen for a valid room) but continue to draw overlay.
         }
 
         glUseProgram(shader_);
@@ -168,6 +192,151 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
         glUseProgram(0);
+
+        // Render 2D minimap overlay in top-right corner using an orthographic projection.
+        GLboolean depthPreviouslyEnabled = glIsEnabled(GL_DEPTH_TEST);
+        if (depthPreviouslyEnabled) {
+            glDisable(GL_DEPTH_TEST);
+        }
+
+        // Build overlay geometry in screen space (x,y in pixels, z = 0)
+        std::vector<float> overlayData;
+        const float mapSize = std::min(160.0f, std::min(static_cast<float>(windowWidth_) * 0.25f, static_cast<float>(windowHeight_) * 0.25f));
+        const float mapMargin = 12.0f;
+        // Place minimap in the top-right corner. We compute mapOriginY such that
+        // the minimap rectangle's top edge is 'mapMargin' from the top of the window.
+        const float mapOriginX = static_cast<float>(windowWidth_) - mapMargin - mapSize;
+        const float mapOriginY = static_cast<float>(windowHeight_) - mapMargin - mapSize;
+        const float tilePx = tileCount > 0 ? (mapSize / static_cast<float>(tileCount)) : 0.0f;
+
+        auto pushQuad2D = [&](float x, float y, float size, const glm::vec3& color) {
+            float x0 = x;
+            float y0 = y;
+            float x1 = x + size;
+            float y1 = y + size;
+            // two triangles (6 verts), each vert: x,y,z,r,g,b
+            auto pushV = [&](float vx, float vy) {
+                overlayData.push_back(vx);
+                overlayData.push_back(vy);
+                overlayData.push_back(0.0f);
+                overlayData.push_back(color.r);
+                overlayData.push_back(color.g);
+                overlayData.push_back(color.b);
+            };
+            pushV(x0, y0);
+            pushV(x1, y0);
+            pushV(x1, y1);
+            pushV(x0, y0);
+            pushV(x1, y1);
+            pushV(x0, y1);
+        };
+
+        // Draw tiles
+        if (tileCount > 0) {
+            for (int y = 0; y < tileCount; ++y) {
+                for (int x = 0; x < tileCount; ++x) {
+                    const std::string& cell = room.scene[y][x];
+                    glm::vec3 c = tileColorForCell(cell);
+                    // Use flipped Y so room row 0 renders at the top of the minimap.
+                    int flippedY = tileCount - 1 - y;
+                    float baseX = mapOriginX + x * tilePx;
+                    float baseY = mapOriginY + flippedY * tilePx;
+                    pushQuad2D(baseX, baseY, tilePx, c);
+                }
+            }
+        }
+
+        // Draw box markers on the minimap.
+        if (tileCount > 0) {
+            for (const auto& kv : state.boxes) {
+                const Pos& bpos = kv.second;
+                if (bpos.room != state.player.room) continue;
+                int bx = bpos.x;
+                int by = bpos.y;
+                int flippedBy = tileCount - 1 - by;
+                float bxPos = mapOriginX + bx * tilePx + tilePx * 0.5f;
+                float byPos = mapOriginY + flippedBy * tilePx + tilePx * 0.5f;
+                float bSize = std::max(2.0f, tilePx * 0.35f);
+                pushQuad2D(bxPos - bSize * 0.5f, byPos - bSize * 0.5f, bSize, glm::vec3(0.85f, 0.55f, 0.2f));
+            }
+        }
+
+        // Draw player arrow (triangle) centered in player's tile, rotated by camera yaw.
+        if (tileCount > 0 && state.player.room == state.player.room) {
+            int px = state.player.x;
+            int py = state.player.y;
+            int flippedPy = tileCount - 1 - py;
+            float centerX = mapOriginX + px * tilePx + tilePx * 0.5f;
+            float centerY = mapOriginY + flippedPy * tilePx + tilePx * 0.5f;
+            float arrowSize = std::max(4.0f, tilePx * 0.6f);
+
+            // Build a triangle pointing to +X in local space, then rotate by camera angle.
+            float halfW = arrowSize * 0.5f;
+            float halfH = arrowSize * 0.45f;
+            glm::vec2 p0_local(halfW, 0.0f);              // tip to +X
+            glm::vec2 p1_local(-halfW, -halfH);           // base lower
+            glm::vec2 p2_local(-halfW, halfH);            // base upper
+
+            // Compute arrow rotation by projecting a small forward offset (in grid
+            // coordinates) into minimap pixels and using atan2 on the pixel delta.
+            // This avoids manual sign flips and ensures the arrow tip points to
+            // the on-map location corresponding to camera forward.
+            const float forwardSampleScale = 0.6f; // fraction of a tile ahead to sample
+            float forwardGridX = static_cast<float>(px) + cameraForward2D_.x * forwardSampleScale;
+            float forwardGridY = static_cast<float>(py) - cameraForward2D_.y * forwardSampleScale;
+            float forwardPixelX = mapOriginX + forwardGridX * tilePx + tilePx * 0.5f;
+            // remember minimap uses flipped Y mapping: screen Y = mapOriginY + (tileCount-1 - gridY) * tilePx
+            float forwardPixelY = mapOriginY + (tileCount - 1 - forwardGridY) * tilePx + tilePx * 0.5f;
+            float dx = forwardPixelX - centerX;
+            float dy = forwardPixelY - centerY;
+            float angle = std::atan2(dy, dx);
+            auto rotatePoint = [&](const glm::vec2& pt) {
+                float rx = pt.x * std::cos(angle) - pt.y * std::sin(angle);
+                float ry = pt.x * std::sin(angle) + pt.y * std::cos(angle);
+                return glm::vec2(centerX + rx, centerY + ry);
+            };
+
+            glm::vec2 rp0 = rotatePoint(p0_local);
+            glm::vec2 rp1 = rotatePoint(p1_local);
+            glm::vec2 rp2 = rotatePoint(p2_local);
+
+            // push triangle as two triangles (rp0,rp1,rp2)
+            auto pushV2 = [&](float vx, float vy, const glm::vec3& color) {
+                overlayData.push_back(vx);
+                overlayData.push_back(vy);
+                overlayData.push_back(0.0f);
+                overlayData.push_back(color.r);
+                overlayData.push_back(color.g);
+                overlayData.push_back(color.b);
+            };
+            glm::vec3 arrowColor(0.2f, 0.9f, 0.3f);
+            pushV2(rp0.x, rp0.y, arrowColor);
+            pushV2(rp1.x, rp1.y, arrowColor);
+            pushV2(rp2.x, rp2.y, arrowColor);
+        }
+
+        // Upload and draw overlay
+        if (!overlayData.empty()) {
+            glUseProgram(shader_);
+            // Orthographic projection: left=0,right=windowWidth, bottom=0, top=windowHeight
+            glm::mat4 overlayProj = glm::ortho(0.0f, static_cast<float>(windowWidth_), 0.0f, static_cast<float>(windowHeight_), -1.0f, 1.0f);
+            glm::mat4 identity = glm::mat4(1.0f);
+            glUniformMatrix4fv(glGetUniformLocation(shader_, "projection"), 1, GL_FALSE, glm::value_ptr(overlayProj));
+            glUniformMatrix4fv(glGetUniformLocation(shader_, "view"), 1, GL_FALSE, glm::value_ptr(identity));
+
+            glBindVertexArray(vao_);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+            glBufferData(GL_ARRAY_BUFFER, overlayData.size() * sizeof(float), overlayData.data(), GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(overlayData.size() / 6));
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+            glUseProgram(0);
+        }
+
+        // Restore depth state
+        if (depthPreviouslyEnabled) {
+            glEnable(GL_DEPTH_TEST);
+        }
     }
 
     /// Release GL resources so repeated init/shutdown are safe.
@@ -361,6 +530,14 @@ private:
     float currentRoomHalfExtent_ = 5.0f;
     glm::vec3 playerEyePosition_{0.0f, 0.05f, 0.0f};
     glm::vec2 cameraForward2D_{0.0f, -1.0f};
+    // Smooth movement state for rendering the player's position between grid cells.
+    glm::vec3 visualPlayerWorldPos_{0.0f, 0.05f, 0.0f}; // interpolated world-space center
+    glm::vec3 visualPlayerFromPos_{0.0f, 0.05f, 0.0f};
+    glm::vec3 visualPlayerTargetPos_{0.0f, 0.05f, 0.0f};
+    glm::ivec2 lastPlayerGrid_{-1, -1};
+    float moveProgress_ = 1.0f; // 0..1 interpolation progress
+    const float moveDuration_ = 0.18f; // seconds to move one tile visually
+    double lastRenderTime_ = 0.0; // for delta time between renderer frames
     const float tileWorldSize_ = 1.0f;
     const float wallHeight_ = 0.5f;
     const float eyeHeightOffset_ = 0.55f;

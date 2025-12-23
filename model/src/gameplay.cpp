@@ -26,6 +26,17 @@ GamePlay::GamePlay(const Level level)
                 if (cell == "p") {
                     currState.player = {room, x, y};
                     rooms[room].scene[y][x] = "."; // Replace player with empty space
+                    // initialize move fields
+                    currState.move_progress = 1.0;
+                    currState.move_from = currState.player;
+                    currState.move_to = currState.player;
+                    // set initial continuous world position (tile center)
+                    const float tileSize = 1.0f;
+                    const int tc = rooms[room].size;
+                    float boardHalf = tc * tileSize * 0.5f;
+                    float wx = -boardHalf + x * tileSize + 0.5f * tileSize;
+                    float wz = boardHalf - y * tileSize - 0.5f * tileSize;
+                    currState.player_world_pos = glm::vec3(wx, 0.05f, wz);
                 }
                 else if (cell == "b") {
                     currState.boxes[boxid] = {room, x, y};
@@ -168,7 +179,25 @@ CellType GamePlay::operateMove(CellType object_to_move, Pos object_curr_pos, Inp
         switch (object_to_move)
         {
             case PLAYER:
+                // Start a continuous move for player: record from/to and mark moving_
+                moveFrom_ = object_curr_pos;
                 nextState.player = next_pos;
+                moveTo_ = next_pos;
+                moving_ = true;
+                moveProgress_ = 0.0;
+                // populate nextState interpolation fields so renderer can read them
+                nextState.move_progress = 0.0;
+                nextState.move_from = moveFrom_;
+                nextState.move_to = moveTo_;
+                // initialize nextState continuous world pos at source
+                {
+                    const float tileSize = 1.0f;
+                    const int tc = rooms[moveFrom_.room].size;
+                    float boardHalf = tc * tileSize * 0.5f;
+                    float wx = -boardHalf + moveFrom_.x * tileSize + 0.5f * tileSize;
+                    float wz = boardHalf - moveFrom_.y * tileSize - 0.5f * tileSize;
+                    nextState.player_world_pos = glm::vec3(wx, 0.05f, wz);
+                }
                 break;
             case BOX:
                 for (const auto& [bid, box]: currState.boxes) {
@@ -194,6 +223,9 @@ CellType GamePlay::operateMove(CellType object_to_move, Pos object_curr_pos, Inp
 
 void GamePlay::operate(Input input)
 {
+    // If already moving, ignore new input (no chaining).
+    if (moving_) return;
+
     nextState = currState;
     nextState.portal_just_passed = std::nullopt;
     
@@ -229,7 +261,73 @@ void GamePlay::operate(Input input)
     nextState.is_win = nextState.is_win && all_destinations_exist_box;
 }
 
+void GamePlay::tick(double dt)
+{
+    if (!moving_) return;
+    moveProgress_ += dt;
+    if (moveProgress_ >= moveDuration_) {
+        // finalize interpolation
+        nextState.move_progress = 1.0;
+        // set final world pos to target center
+        {
+            const float tileSize = 1.0f;
+            const int tc = rooms[moveTo_.room].size;
+            float boardHalf = tc * tileSize * 0.5f;
+            float wx = -boardHalf + moveTo_.x * tileSize + 0.5f * tileSize;
+            float wz = boardHalf - moveTo_.y * tileSize - 0.5f * tileSize;
+            nextState.player_world_pos = glm::vec3(wx, 0.05f, wz);
+        }
+        // commit
+        currState = nextState;
+        moving_ = false;
+        moveProgress_ = 0.0;
+    } else {
+        // update nextState progress and interpolated world position so renderer can animate
+        double prog = std::min(1.0, moveProgress_ / moveDuration_);
+        nextState.move_progress = prog;
+        // interpolate world position between from and to
+        const float tileSize = 1.0f;
+        const int tc_from = rooms[moveFrom_.room].size;
+        float boardHalfFrom = tc_from * tileSize * 0.5f;
+        float fx = -boardHalfFrom + moveFrom_.x * tileSize + 0.5f * tileSize;
+        float fz = boardHalfFrom - moveFrom_.y * tileSize - 0.5f * tileSize;
+
+        const int tc_to = rooms[moveTo_.room].size;
+        float boardHalfTo = tc_to * tileSize * 0.5f;
+        float tx = -boardHalfTo + moveTo_.x * tileSize + 0.5f * tileSize;
+        float tz = boardHalfTo - moveTo_.y * tileSize - 0.5f * tileSize;
+
+        float p = static_cast<float>(prog);
+        float smooth = p * p * (3.0f - 2.0f * p);
+        nextState.player_world_pos = glm::vec3(glm::mix(fx, tx, smooth), 0.05f, glm::mix(fz, tz, smooth));
+    }
+}
+
+bool GamePlay::isMoving() const {
+    return moving_;
+}
+
 void GamePlay::updateState()
 {
+    // Force commit pending state (used by UI/controller logic when immediate commit desired)
     currState = nextState;
+    moving_ = false;
+    moveProgress_ = 0.0;
+}
+
+double GamePlay::getMoveDuration() const {
+    return moveDuration_;
+}
+
+double GamePlay::getMoveProgress() const {
+    if (!moving_) return 1.0;
+    return std::min(1.0, moveProgress_ / moveDuration_);
+}
+
+Pos GamePlay::getMoveFrom() const {
+    return moveFrom_;
+}
+
+Pos GamePlay::getMoveTo() const {
+    return moveTo_;
 }
