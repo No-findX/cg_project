@@ -101,6 +101,13 @@ public:
         return gameplay_->getCurrState();
     }
 
+    GameState getNextState() const {
+        if (!gameplay_) {
+            return GameState{};
+        }
+        return gameplay_->getNextState();
+    }
+
     const Level* getLevel() const {
         return gameplay_ ? &level_ : nullptr;
     }

@@ -112,23 +112,19 @@ public:
 
     // rotate camera yaw in 90° steps; position will be recomputed in render
     void rotateCameraBy90(bool left, float rotationtime = 0.0) {
-        // 如果当前有旋转动画在进行，先将当前角度作为新的起点，继续下一次 90° 动画
         const float step = left ? -90.0f : 90.0f;
 
         if (rotationtime == 0.0f) {
-            // 立即跳转
-            cameraYaw_ += step;
             if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
             else if (cameraYaw_ < -360.0f) cameraYaw_ += 360.0f;
+            cameraYaw_ += step;
             cameraPitch_ = fixedPitch_;
             rotating_ = false;
         } else {
-            // 启动平滑旋转动画
-            rotateStartYaw_ = cameraYaw_;
-            rotateTargetYaw_ = cameraYaw_ + step;
-            // 归一化目标角到合理范围（保持输入映射稳定）
             if (rotateTargetYaw_ > 360.0f) rotateTargetYaw_ -= 360.0f;
             else if (rotateTargetYaw_ < -360.0f) rotateTargetYaw_ += 360.0f;
+            rotateStartYaw_ = cameraYaw_;
+            rotateTargetYaw_ = cameraYaw_ + step;
 
             rotateDuration_ = rotationtime;
             rotateStartTime_ = static_cast<float>(glfwGetTime());
@@ -137,15 +133,22 @@ public:
         }
     }
 
+    // 开始一次位移动画（用于玩家/箱子推进）
+    void beginMoveAnimation(float duration) {
+        moveDuration_ = duration;
+        moveStartTime_ = static_cast<float>(glfwGetTime());
+        moving_ = true;
+    }
+
     Input remapInputForCamera(Input input) const {
         return mapCameraRelativeInput(input);
     }
 
-    void render(const GameState& state, const Level& level) {
+    void render(const GameState& state, const Level& level, const GameState& next_state) {
         if (shader_ == 0) return;
         if (level.rooms.empty()) return;
 
-        // 推进摄像机旋转动画（如果在进行中）
+        // 相机旋转动画（平滑）
         if (rotating_) {
             const float now = static_cast<float>(glfwGetTime());
             float elapsed = now - rotateStartTime_;
@@ -153,42 +156,29 @@ public:
                 cameraYaw_ = rotateTargetYaw_;
                 rotating_ = false;
             } else {
-                // 三次贝塞尔控制点（角度-时间域）
-                // P0 = (0°, 0), P1 = (0°, t*duration), P2 = (90°, (1-t)*duration), P3 = (90°, duration)
-                const float d = rotateDuration_;
-                const float t = bezierT_; // 对称，默认 0.5
-                const float p0x = 0.0f, p0y = 0.0f;
-                const float p1x = 0.0f, p1y = t * d;
-                const float p2x = 90.0f, p2y = (1.0f - t) * d;
-                const float p3x = 90.0f, p3y = d;
+                float u = elapsed / rotateDuration_;
+                if (u < 0.0f) u = 0.0f;
+                if (u > 1.0f) u = 1.0f;
+                float p = u * u * (3.0f - 2.0f * u);
+                float delta = (rotateTargetYaw_ >= rotateStartYaw_) ? (90.0f) : (-90.0f);
+                cameraYaw_ = rotateStartYaw_ + delta * p;
+            }
+        }
 
-                auto bezier = [](float u, float a0, float a1, float a2, float a3) {
-                    float omu = 1.0f - u;
-                    return omu * omu * omu * a0
-                         + 3.0f * omu * omu * u * a1
-                         + 3.0f * omu * u * u * a2
-                         + u * u * u * a3;
-                };
-
-                // 已知时间 y=elapsed，反解参数 u，使得 B_y(u) = elapsed
-                // 使用二分法求解 u ∈ [0,1]，时间域是单调递增，保证稳定性
-                float uLo = 0.0f, uHi = 1.0f;
-                for (int i = 0; i < 20; ++i) {
-                    float uMid = 0.5f * (uLo + uHi);
-                    float yMid = bezier(uMid, p0y, p1y, p2y, p3y);
-                    if (yMid < elapsed) uLo = uMid;
-                    else uHi = uMid;
-                }
-                float u = 0.5f * (uLo + uHi);
-
-                // 用同一 u 计算角度轴的进度（0°->90°）
-                float xDeg = bezier(u, p0x, p1x, p2x, p3x); // 0 到 90
-                float direction = (rotateTargetYaw_ >= rotateStartYaw_) ? 1.0f : -1.0f;
-                cameraYaw_ = rotateStartYaw_ + direction * xDeg;
-
-                // 规范化，避免累计漂移
-                if (cameraYaw_ > 360.0f) cameraYaw_ -= 360.0f;
-                else if (cameraYaw_ < -360.0f) cameraYaw_ += 360.0f;
+        // 位移动画时间参数
+        float moveT = 1.0f;
+        if (moving_) {
+            const float now = static_cast<float>(glfwGetTime());
+            float elapsed = now - moveStartTime_;
+            if (elapsed >= moveDuration_) {
+                moving_ = false;
+                moveT = 1.0f;
+            } else {
+                float u = elapsed / moveDuration_;
+                if (u < 0.0f) u = 0.0f;
+                if (u > 1.0f) u = 1.0f;
+                // 与相机一致使用 smoothstep
+                moveT = u * u * (3.0f - 2.0f * u);
             }
         }
 
@@ -208,7 +198,7 @@ public:
             glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
-            renderRoomIndex(static_cast<int>(i), state, level);
+            renderRoomIndex(static_cast<int>(i), state, level, next_state, moveT);
 
             glBindTexture(GL_TEXTURE_2D, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -219,7 +209,7 @@ public:
             glViewport(0, 0, windowWidth_, windowHeight_);
             glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
-            renderRoomIndex(state.player.room, state, level);
+            renderRoomIndex(state.player.room, state, level, next_state, moveT);
         }
     }
 
@@ -276,13 +266,14 @@ private:
         }
     }
 
-    void renderRoomIndex(int roomId, const GameState& state, const Level& level) {
+    // 新增：支持插值渲染，依据 state 与 next_state 以及 moveT
+    void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT) {
         if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
         vertexData_.clear();
-        currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, tileWorldSize_);
+        currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
         glm::vec3 front;
         float yawRad = glm::radians(cameraYaw_);
@@ -321,7 +312,7 @@ private:
         glUseProgram(0);
     }
 
-    float appendRoomGeometry(const Room& room, int roomId, const GameState& state, float tileSize) {
+    float appendRoomGeometry(const Room& room, int roomId, const GameState& state, const GameState& next_state, float moveT, float tileSize) {
         const int tileCount = room.size;
         const float boardHalf = tileCount * tileSize * 0.5f;
 
@@ -371,6 +362,22 @@ private:
             return std::array<float, 4>{minX, maxX, minZ, maxZ};
         };
 
+        auto centerForCell = [&](int gridX, int gridY) -> glm::vec2 {
+            auto b = boundsForCell(gridX, gridY);
+            return glm::vec2((b[0] + b[1]) * 0.5f, (b[2] + b[3]) * 0.5f); // x, z
+        };
+
+        auto drawAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height) {
+            const float inset = tileSize * 0.2f;
+            const float halfW = (tileSize * 0.5f) - inset;
+            float minX = centerXZ.x - halfW;
+            float maxX = centerXZ.x + halfW;
+            float minZ = centerXZ.y - halfW;
+            float maxZ = centerXZ.y + halfW;
+            appendColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
+        };
+
+        // 地面/墙体
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
                 auto bounds = boundsForCell(x, y);
@@ -383,24 +390,74 @@ private:
             }
         }
 
-        auto drawOccupant = [&](const Pos& pos, const glm::vec3& color, float height, bool isPlayer) {
-            if (pos.room != roomId) return;
-            auto bounds = boundsForCell(pos.x, pos.y);
-            const float inset = tileSize * 0.2f;
+        // 计算玩家插值
+        auto drawPlayer = [&]() {
+            const Pos& s = state.player;
+            const Pos& e = next_state.player;
+            glm::vec3 color(0.25f, 0.85f, 0.35f);
+            float height = 0.45f;
 
-            if (isPlayer && hidePlayerMesh_) {
-                return;
+            if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
+                glm::vec2 cs = centerForCell(s.x, s.y);
+                glm::vec2 ce = centerForCell(e.x, e.y);
+                glm::vec2 c = cs + (ce - cs) * moveT;
+                drawAtCenter(c, color, height);
+            } else if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
+                // 静止或跨房间：使用 s
+                glm::vec2 c = centerForCell(s.x, s.y);
+                drawAtCenter(c, color, height);
+            } else if (!moving_ && e.room == roomId) {
+                // 动画结束后落位到 e
+                glm::vec2 c = centerForCell(e.x, e.y);
+                drawAtCenter(c, color, height);
             }
-
-            appendColumn(bounds[0] + inset, bounds[1] - inset, bounds[2] + inset, bounds[3] - inset,
-                         0.02f, 0.02f + height, color);
         };
 
-        for (const auto& kv : state.boxes) {
-            drawOccupant(kv.second, glm::vec3(0.85f, 0.55f, 0.2f), 0.35f, false);
-        }
+        // 计算箱子插值
+        auto drawBoxes = [&]() {
+            for (const auto& kv : state.boxes) {
+                int id = kv.first;
+                const Pos& s = kv.second;
+                glm::vec3 color(0.85f, 0.55f, 0.2f);
+                float height = 0.35f;
 
-        drawOccupant(state.player, glm::vec3(0.25f, 0.85f, 0.35f), 0.45f, true);
+                auto it = next_state.boxes.find(id);
+                if (it != next_state.boxes.end()) {
+                    const Pos& e = it->second;
+
+                    if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
+                        glm::vec2 cs = centerForCell(s.x, s.y);
+                        glm::vec2 ce = centerForCell(e.x, e.y);
+                        glm::vec2 c = cs + (ce - cs) * moveT;
+                        drawAtCenter(c, color, height);
+                        continue;
+                    }
+
+                    if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
+                        glm::vec2 c = centerForCell(s.x, s.y);
+                        drawAtCenter(c, color, height);
+                        continue;
+                    }
+
+                    if (!moving_ && e.room == roomId) {
+                        glm::vec2 c = centerForCell(e.x, e.y);
+                        drawAtCenter(c, color, height);
+                        continue;
+                    }
+                } else {
+                    // 目标状态中不存在该箱子（例如被传送/消失），保持当前显示（非动画）
+                    if (s.room == roomId) {
+                        glm::vec2 c = centerForCell(s.x, s.y);
+                        drawAtCenter(c, color, height);
+                    }
+                }
+            }
+        };
+
+        drawBoxes();
+        // 玩家最后绘制，避免被箱子遮挡
+        drawPlayer();
+
         return boardHalf;
     }
 
@@ -504,7 +561,11 @@ private:
     float rotateTargetYaw_ = 0.0f;
     float rotateDuration_ = 0.0f;
     float rotateStartTime_ = 0.0f;
-    float bezierT_ = 0.5f; // 对称控制点比例 t
+
+    // 位移动画状态（玩家/箱子）
+    bool moving_ = false;
+    float moveDuration_ = 0.0f;
+    float moveStartTime_ = 0.0f;
 };
 
 } // namespace detail
@@ -534,10 +595,12 @@ public:
         initialized_ = false;
     }
 
-    void render(const GameState* state, const Level* level) {
+    void render(const GameState* state, const Level* level, const GameState* next_state = nullptr) {
         bool renderedScene = false;
         if (showGameScene_ && state && level) {
-            renderer_.render(*state, *level);
+            // 容错：若未提供 next_state，则使用 state 自身
+            const GameState& nextRef = next_state ? *next_state : *state;
+            renderer_.render(*state, *level, nextRef);
             renderedScene = true;
         }
         if (!renderedScene) {
@@ -574,6 +637,12 @@ public:
         else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
     }
 
+    // 新增：由应用层启动位移动画
+    void beginMoveAnimation(float duration) {
+        if (!showGameScene_) return;
+        renderer_.beginMoveAnimation(duration);
+    }
+
 private:
     UIManager uiManager_;
     detail::GameRenderer renderer_;
@@ -582,6 +651,8 @@ private:
     std::function<void()> startCallback_;
     float lastMouseX_ = 0.0f;
     float lastMouseY_ = 0.0f;
+
+    float animationDuration_ = 0.5f;
 };
 
 #endif // GAME_VIEW_HPP

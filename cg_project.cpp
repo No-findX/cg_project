@@ -47,7 +47,13 @@ private:
     bool gameStarted_ = false;         // Gated until the Start button is clicked.
 
     GameState cachedState_{};          // Local copy of game state used for rendering.
+    GameState cachedNextState_{};
     bool hasCachedState_ = false;      // Whether cachedState_ currently holds a valid snapshot.
+
+    // --- 新增：移动动画的简单时序控制 ---
+    bool animatingMove_ = false;
+    double moveAnimStart_ = 0.0;
+    double moveAnimDuration_ = 0.5; // 与 view 内部默认保持一致
 };
 
 GameApplication::GameApplication(int width, int height)
@@ -196,9 +202,29 @@ void GameApplication::processInput() {
 
     if (hasInput) {
         if (operateAction) {
+            // 以相机为参考系重映射输入
             input = view_.remapInputForCamera(input);
+
+            // 在应用输入之前缓存“前状态”
+            GameState prev = viewModel_.getState();
+
+            // 应用一次操作（当前 ViewModel 会直接 commit 到下一状态）
             viewModel_.handleInput(input);
-        } else {
+
+            // 输入后读取“目标状态”
+            GameState next = viewModel_.getState();
+
+            // 缓存一对状态，并启动动画
+            cachedState_ = prev;
+            cachedNextState_ = next;
+            hasCachedState_ = true;
+
+            animatingMove_ = true;
+            moveAnimStart_ = now;
+            // 通知视图开始动画（渲染端使用自己的时钟）
+            view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_));
+        }
+        else {
             view_.handleKey(viewRotate);
         }
         lastInputTime_ = now;
@@ -212,6 +238,7 @@ void GameApplication::update() {
         return;
     }
 
+    // 仅维护胜利状态标志
     viewModel_.update();
 
     if (viewModel_.hasGame()) {
@@ -238,9 +265,29 @@ void GameApplication::render() {
 
     const Level* level = viewModel_.getLevel();
     if (viewModel_.hasGame() && level) {
-        cachedState_ = viewModel_.getState();
-        hasCachedState_ = true;
-        view_.render(&cachedState_, level);
+        // 动画期间：冻结状态，不刷新缓存；否则从模型拉取新快照
+        if (!animatingMove_) {
+            cachedState_ = viewModel_.getState();
+            cachedNextState_ = viewModel_.getNextState();
+            hasCachedState_ = true;
+        } else {
+            // 检查动画是否结束
+            double now = glfwGetTime();
+            if (now - moveAnimStart_ >= moveAnimDuration_) {
+                animatingMove_ = false;
+                // 动画完成后刷新为模型的最新状态
+                cachedState_ = viewModel_.getState();
+                cachedNextState_ = viewModel_.getNextState();
+                hasCachedState_ = true;
+            }
+        }
+
+        if (hasCachedState_) {
+            // 总是传入 next_state（GameView 内部会使用）
+            view_.render(&cachedState_, level, &cachedNextState_);
+        } else {
+            view_.render(nullptr, nullptr);
+        }
     } else {
         hasCachedState_ = false;
         view_.render(nullptr, nullptr);
