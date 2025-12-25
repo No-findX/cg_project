@@ -47,7 +47,17 @@ private:
     bool gameStarted_ = false;         // Gated until the Start button is clicked.
 
     GameState cachedState_{};          // Local copy of game state used for rendering.
+    GameState cachedNextState_{};
     bool hasCachedState_ = false;      // Whether cachedState_ currently holds a valid snapshot.
+
+    // 位移动画时序
+    bool animatingMove_ = false;
+    double moveAnimStart_ = 0.0;
+    double moveAnimDuration_ = 0.3; // 缩短动画时长，提高轻快感
+
+    // 动画末段输入缓存
+    bool hasPendingInput_ = false;
+    Input pendingInput_ = UP;
 };
 
 GameApplication::GameApplication(int width, int height)
@@ -158,9 +168,13 @@ void GameApplication::processInput() {
     }
 
     double now = glfwGetTime();
-    if (now - lastInputTime_ < inputCooldown_) {
-        return;
-    }
+
+    // 动画期间：允许相机旋转；移动操作在末段进行缓存
+    auto isNearMoveEnd = [&]() -> bool {
+        if (!animatingMove_) return false;
+        double u = (now - moveAnimStart_) / moveAnimDuration_;
+        return u >= 0.5; // 末段判定阈值：80% 以后
+    };
 
     Input input = UP;
     int viewRotate = GLFW_KEY_U;
@@ -194,14 +208,64 @@ void GameApplication::processInput() {
         hasInput = true;
     }
 
-    if (hasInput) {
-        if (operateAction) {
-            input = view_.remapInputForCamera(input);
-            viewModel_.handleInput(input);
-        } else {
-            view_.handleKey(viewRotate);
+    if (!hasInput) {
+        return;
+    }
+
+    // 新增：相机旋转期间锁定所有游戏输入（包括继续旋转与移动），防止角度漂移与输入抖动
+    if (view_.isCameraRotating()) {
+        return;
+    }
+
+    if (operateAction) {
+        // 若处于动画末段，缓存该输入，等待动画结束后执行
+        if (animatingMove_ && isNearMoveEnd()) {
+            pendingInput_ = view_.remapInputForCamera(input);
+            hasPendingInput_ = true;
+            return;
         }
+
+        // 非动画或非末段：按冷却判断是否可执行
+        if (animatingMove_) {
+            // 动画进行中，且非末段：忽略该移动输入
+            return;
+        }
+
+        if (now - lastInputTime_ < inputCooldown_) {
+            return;
+        }
+
+        // 以相机为参考系重映射输入
+        input = view_.remapInputForCamera(input);
+
+        // 应用输入前缓存“前状态”
+        GameState prev = viewModel_.getState();
+
+        // 执行一次操作
+        viewModel_.handleInput(input);
+
+        // 输入后读取“目标状态”
+        GameState next = viewModel_.getState();
+
+        // 缓存状态用于渲染插值
+        cachedState_ = prev;
+        cachedNextState_ = next;
+        hasCachedState_ = true;
+
+        // 启动动画
+        animatingMove_ = true;
+        moveAnimStart_ = now;
+        view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_));
+
         lastInputTime_ = now;
+    } else {
+        // 相机旋转：仅当成功触发新旋转时才更新冷却时间，避免长按刷新冷却导致后续输入被意外推迟
+        bool wasRotating = view_.isCameraRotating();
+        view_.handleKey(viewRotate);
+        bool nowRotating = view_.isCameraRotating();
+        if (!wasRotating && nowRotating) {
+            lastInputTime_ = now;
+        }
     }
 }
 
@@ -212,6 +276,7 @@ void GameApplication::update() {
         return;
     }
 
+    // 仅维护胜利状态标志
     viewModel_.update();
 
     if (viewModel_.hasGame()) {
@@ -238,9 +303,49 @@ void GameApplication::render() {
 
     const Level* level = viewModel_.getLevel();
     if (viewModel_.hasGame() && level) {
-        cachedState_ = viewModel_.getState();
-        hasCachedState_ = true;
-        view_.render(&cachedState_, level);
+        if (!animatingMove_) {
+            // 动画未进行：正常刷新
+            cachedState_ = viewModel_.getState();
+            cachedNextState_ = viewModel_.getNextState();
+            hasCachedState_ = true;
+        } else {
+            // 动画期间：检查结束
+            double now = glfwGetTime();
+            if (now - moveAnimStart_ >= moveAnimDuration_) {
+                animatingMove_ = false;
+
+                // 若存在缓存输入，则立即执行并触发下一段动画
+                if (hasPendingInput_) {
+                    hasPendingInput_ = false;
+
+                    GameState prev = viewModel_.getState();
+                    // 执行缓存输入
+                    viewModel_.handleInput(pendingInput_);
+                    GameState next = viewModel_.getState();
+
+                    cachedState_ = prev;
+                    cachedNextState_ = next;
+                    hasCachedState_ = true;
+
+                    // 立即启动下一段动画
+                    animatingMove_ = true;
+                    moveAnimStart_ = now;
+                    view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_));
+                    lastInputTime_ = now;
+                } else {
+                    // 无缓存输入：刷新到最新状态
+                    cachedState_ = viewModel_.getState();
+                    cachedNextState_ = viewModel_.getNextState();
+                    hasCachedState_ = true;
+                }
+            }
+        }
+
+        if (hasCachedState_) {
+            view_.render(&cachedState_, level, &cachedNextState_);
+        } else {
+            view_.render(nullptr, nullptr);
+        }
     } else {
         hasCachedState_ = false;
         view_.render(nullptr, nullptr);
