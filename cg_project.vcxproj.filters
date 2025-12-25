@@ -24,6 +24,9 @@
     <ClCompile Include="model\src\level_loader.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="glad.c">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="model\include\gameplay.hpp">
@@ -47,9 +50,18 @@
     <ClInclude Include="viewmodel\game_view_model.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="view\shader.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="model\levels\l1.json">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\basic.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\basic.vert">
       <Filter>源文件</Filter>
     </None>
   </ItemGroup>

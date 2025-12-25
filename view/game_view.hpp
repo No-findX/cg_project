@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <memory>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -21,47 +22,11 @@
 #include "model/include/gameplay.hpp"
 #include "model/include/level_loader.hpp"
 #include "view/uimanager.hpp"
+#include "view/shader.hpp"
 
 namespace detail {
 
-inline GLuint CompileShader(GLenum type, const char* src) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &src, nullptr);
-    glCompileShader(shader);
-    GLint success = 0;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char log[512];
-        glGetShaderInfoLog(shader, 512, nullptr, log);
-        std::cerr << "Shader compile error: " << log << std::endl;
-    }
-    return shader;
-}
-
-static const char* kGameVertexShader = R"(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aColor;
-
-uniform mat4 view;
-uniform mat4 projection;
-
-out vec3 vColor;
-
-void main() {
-    vColor = aColor;
-    gl_Position = projection * view * vec4(aPos, 1.0);
-}
-)";
-
-static const char* kGameFragmentShader = R"(
-#version 330 core
-in vec3 vColor;
-out vec4 FragColor;
-void main() {
-    FragColor = vec4(vColor, 1.0);
-}
-)";
+// 移除内联着色器编译工具与内联着色器源码，改用 Shader 封装加载文件
 
 class GameRenderer {
 public:
@@ -71,21 +36,8 @@ public:
         textureWidth_ = windowWidth_;
         textureHeight_ = windowHeight_;
 
-        GLuint vert = CompileShader(GL_VERTEX_SHADER, kGameVertexShader);
-        GLuint frag = CompileShader(GL_FRAGMENT_SHADER, kGameFragmentShader);
-        shader_ = glCreateProgram();
-        glAttachShader(shader_, vert);
-        glAttachShader(shader_, frag);
-        glLinkProgram(shader_);
-        GLint success = 0;
-        glGetProgramiv(shader_, GL_LINK_STATUS, &success);
-        if (!success) {
-            char log[512];
-            glGetProgramInfoLog(shader_, 512, nullptr, log);
-            std::cerr << "Program link error: " << log << std::endl;
-        }
-        glDeleteShader(vert);
-        glDeleteShader(frag);
+        // 使用封装的 Shader 类从文件加载
+        shader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
 
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);
@@ -157,7 +109,7 @@ public:
     }
 
     void render(const GameState& state, const Level& level, const GameState& next_state) {
-        if (shader_ == 0) return;
+        if (!shader_) return;
         if (level.rooms.empty()) return;
 
         // 相机旋转动画（平滑）
@@ -195,29 +147,20 @@ public:
                 const float dec = 0.2f;
                 const float constv = 1.0f - acc - dec; // 0.6
                 // 归一化最大速度，使总位移为 1
-                // 加速段距离 s1 = 0.5*a*vmax, 减速段同 s3 = 0.5*d*vmax, 匀速段 s2 = constv*vmax
-                // s1+s2+s3 = (0.5*(acc+dec)+constv)*vmax = 1 => vmax = 1 / (constv + 0.5f*(acc+dec))
                 const float vmax = 1.0f / (constv + 0.5f * (acc + dec));
 
                 if (u <= acc) {
-                    // s = 0.5*a*(u/acc)^2 * vmax*acc 直接用匀加速：s = 0.5 * aAcc * t^2
-                    // 以归一化时间 u，在加速段位移为 0.5 * vmax/acc * u^2
                     moveT = 0.5f * (vmax / acc) * u * u;
                 } else if (u <= acc + constv) {
-                    // 到达加速段末位移
                     const float s_acc = 0.5f * vmax * acc;
-                    // 匀速段：s = vmax * (u - acc)
                     moveT = s_acc + vmax * (u - acc);
                 } else {
-                    // 进入减速段
                     const float s_acc = 0.5f * vmax * acc;
                     const float s_const = vmax * constv;
-                    float ud = u - (acc + constv); // 减速段经历的归一化时间
-                    // 减速段位移：s = vmax*ud - 0.5*(vmax/dec)*ud^2
+                    float ud = u - (acc + constv);
                     moveT = s_acc + s_const + vmax * ud - 0.5f * (vmax / dec) * ud * ud;
                 }
 
-                // 保护
                 if (moveT < 0.0f) moveT = 0.0f;
                 if (moveT > 1.0f) moveT = 1.0f;
             }
@@ -264,8 +207,9 @@ public:
             vao_ = 0;
         }
         if (shader_) {
-            glDeleteProgram(shader_);
-            shader_ = 0;
+            // Shader 类未定义析构释放，请在此删除程序对象
+            glDeleteProgram(shader_->ID);
+            shader_.reset();
         }
         if (fbo_) {
             glDeleteFramebuffers(1, &fbo_);
@@ -340,9 +284,9 @@ private:
 
         if (vertexData_.empty()) return;
 
-        glUseProgram(shader_);
-        glUniformMatrix4fv(glGetUniformLocation(shader_, "view"), 1, GL_FALSE, glm::value_ptr(view_));
-        glUniformMatrix4fv(glGetUniformLocation(shader_, "projection"), 1, GL_FALSE, glm::value_ptr(projection_));
+        shader_->use();
+        shader_->setMat4("view", view_);
+        shader_->setMat4("projection", projection_);
 
         glBindVertexArray(vao_);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_);
@@ -570,7 +514,7 @@ private:
     // GL 资源
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
-    GLuint shader_ = 0;
+    std::unique_ptr<Shader> shader_;
     GLuint fbo_ = 0;
     std::vector<GLuint> roomTextures_;
     int textureWidth_ = 0;

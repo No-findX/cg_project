@@ -190,10 +190,13 @@
     <ClInclude Include="view\button.hpp" />
     <ClInclude Include="view\button_manager.hpp" />
     <ClInclude Include="view\game_view.hpp" />
+    <ClInclude Include="view\shader.hpp" />
     <ClInclude Include="view\uimanager.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="model\levels\l1.json" />
+    <None Include="view\shader\basic.frag" />
+    <None Include="view\shader\basic.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
