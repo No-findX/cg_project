@@ -55,14 +55,20 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="model\levels\l1.json">
-      <Filter>源文件</Filter>
-    </None>
     <None Include="view\shader\basic.frag">
       <Filter>源文件</Filter>
     </None>
     <None Include="view\shader\basic.vert">
       <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\softcube.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\softcube.vert">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="model\levels\l1.json">
+      <Filter>资源文件</Filter>
     </None>
   </ItemGroup>
 </Project>

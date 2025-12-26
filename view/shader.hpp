@@ -141,6 +141,8 @@ public:
         glDeleteShader(fragment);
         if (tcs != 0) glDeleteShader(tcs);
         if (tes != 0) glDeleteShader(tes);
+
+        std::cout << "Compiling Accomplished" << std::endl;
     }
     // activate the shader
     // ------------------------------------------------------------------------

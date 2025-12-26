@@ -26,8 +26,6 @@
 
 namespace detail {
 
-// 移除内联着色器编译工具与内联着色器源码，改用 Shader 封装加载文件
-
 class GameRenderer {
 public:
     void init(int windowWidth, int windowHeight) {
@@ -37,8 +35,10 @@ public:
         textureHeight_ = windowHeight_;
 
         // 使用封装的 Shader 类从文件加载
-        shader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
+        basicShader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
+        softcubeShader_ = std::make_unique<Shader>("view/shader/softcube.vert", "view/shader/softcube.frag");
 
+        // 基础几何（pos3 + color3）
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);
         glBindVertexArray(vao_);
@@ -49,6 +49,26 @@ public:
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+
+        // 软体立方体（pos3 + color3 + normal2 + tex3）
+        glGenVertexArrays(1, &vaoSoft_);
+        glGenBuffers(1, &vboSoft_);
+        glBindVertexArray(vaoSoft_);
+        glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
+        glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+
+        const GLsizei softStride = static_cast<GLsizei>(11 * sizeof(float));
+        glEnableVertexAttribArray(0); // aPos
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, softStride, (void*)0);
+        glEnableVertexAttribArray(1); // aColor
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, softStride, (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2); // aNormal (vec2)
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, softStride, (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(3); // aTex (vec3)
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, softStride, (void*)(8 * sizeof(float)));
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
@@ -109,7 +129,7 @@ public:
     }
 
     void render(const GameState& state, const Level& level, const GameState& next_state) {
-        if (!shader_) return;
+        if (!basicShader_) return;
         if (level.rooms.empty()) return;
 
         // 相机旋转动画（平滑）
@@ -206,10 +226,21 @@ public:
             glDeleteVertexArrays(1, &vao_);
             vao_ = 0;
         }
-        if (shader_) {
-            // Shader 类未定义析构释放，请在此删除程序对象
-            glDeleteProgram(shader_->ID);
-            shader_.reset();
+        if (vboSoft_) {
+            glDeleteBuffers(1, &vboSoft_);
+            vboSoft_ = 0;
+        }
+        if (vaoSoft_) {
+            glDeleteVertexArrays(1, &vaoSoft_);
+            vaoSoft_ = 0;
+        }
+        if (basicShader_) {
+            glDeleteProgram(basicShader_->ID);
+            basicShader_.reset();
+        }
+        if (softcubeShader_) {
+            glDeleteProgram(softcubeShader_->ID);
+            softcubeShader_.reset();
         }
         if (fbo_) {
             glDeleteFramebuffers(1, &fbo_);
@@ -258,6 +289,9 @@ private:
         if (room.size <= 0) return;
 
         vertexData_.clear();
+        softVertexData_.clear();
+        moveDirection_ = glm::vec2(0.0f); // 默认无方向（用于非移动或非本房间）
+
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
         glm::vec3 front;
@@ -282,18 +316,44 @@ private:
         glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        if (vertexData_.empty()) return;
+        // 绘制静态几何（地面/墙/箱子）
+        if (!vertexData_.empty()) {
+            basicShader_->use();
+            basicShader_->setMat4("view", view_);
+            basicShader_->setMat4("projection", projection_);
 
-        shader_->use();
-        shader_->setMat4("view", view_);
-        shader_->setMat4("projection", projection_);
+            glBindVertexArray(vao_);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+            glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexData_.size() / 6));
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+        }
 
-        glBindVertexArray(vao_);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-        glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexData_.size() / 6));
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
+        // 绘制角色（软体立方体 + 着色器形变）
+        if (!softVertexData_.empty() && softcubeShader_) {
+            softcubeShader_->use();
+            softcubeShader_->setMat4("view", view_);
+            softcubeShader_->setMat4("projection", projection_);
+            softcubeShader_->setVec2("direction", moveDirection_);
+            softcubeShader_->setFloat("moveT", moveT);
+
+            // 待机时间（周期 idleDuration_）
+            float idleT = 0.0f;
+            if (idleDuration_ > 1e-5f) {
+                float now = static_cast<float>(glfwGetTime());
+                idleT = std::fmod(now, idleDuration_) / idleDuration_;
+            }
+            softcubeShader_->setFloat("idleT", idleT);
+
+            glBindVertexArray(vaoSoft_);
+            glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
+            glBufferData(GL_ARRAY_BUFFER, softVertexData_.size() * sizeof(float), softVertexData_.data(), GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(softVertexData_.size() / 11));
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+        }
+
         glUseProgram(0);
     }
 
@@ -303,6 +363,15 @@ private:
 
         playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
+        auto pushVertex = [&](const glm::vec3& pos, const glm::vec3& color) {
+            vertexData_.push_back(pos.x);
+            vertexData_.push_back(pos.y);
+            vertexData_.push_back(pos.z);
+            vertexData_.push_back(color.r);
+            vertexData_.push_back(color.g);
+            vertexData_.push_back(color.b);
+        };
+
         auto pushQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
             pushVertex(v0, color);
             pushVertex(v1, color);
@@ -310,6 +379,37 @@ private:
             pushVertex(v0, color);
             pushVertex(v2, color);
             pushVertex(v3, color);
+        };
+
+        // 软体立方体：扩展布局 push
+        auto pushSoftVertex = [&](const glm::vec3& pos, const glm::vec3& color, const glm::vec2& n2, const glm::vec3& tex) {
+            softVertexData_.push_back(pos.x);
+            softVertexData_.push_back(pos.y);
+            softVertexData_.push_back(pos.z);
+            softVertexData_.push_back(color.r);
+            softVertexData_.push_back(color.g);
+            softVertexData_.push_back(color.b);
+            softVertexData_.push_back(n2.x);
+            softVertexData_.push_back(n2.y);
+            softVertexData_.push_back(tex.x);
+            softVertexData_.push_back(tex.y);
+            softVertexData_.push_back(tex.z);
+        };
+
+        auto pushSoftQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3,
+                                const glm::vec3& color, const glm::vec2& n2, float cx, float cz, float halfW) {
+            // aTex.xy = 相对中心归一化偏移，aTex.z = halfW
+            auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
+                float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
+                float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
+                return glm::vec3(xNorm, zNorm, halfW);
+            };
+            pushSoftVertex(v0, color, n2, makeTex(v0));
+            pushSoftVertex(v1, color, n2, makeTex(v1));
+            pushSoftVertex(v2, color, n2, makeTex(v2));
+            pushSoftVertex(v0, color, n2, makeTex(v0));
+            pushSoftVertex(v2, color, n2, makeTex(v2));
+            pushSoftVertex(v3, color, n2, makeTex(v3));
         };
 
         auto appendFloor = [&](float minX, float maxX, float minZ, float maxZ, const glm::vec3& color) {
@@ -339,59 +439,24 @@ private:
             pushQuad(bottom3, bottom0, top0, top3, sideColor);
         };
 
+        // CPU 端软体立方体：不做待机形变，只输出细分网格与 aNormal/aTex
         auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
-            const glm::vec3& color, float amp, float timeT) {
-            // 16x16 细分
+            const glm::vec3& color, float /*amp*/, float /*timeT*/) {
             const int RES = 16;
-            const float TWO_PI = 6.28318530718f;
 
-            // 周期相位：由 timeT (0..1) 推动
-            float phase = std::sin(TWO_PI * timeT);
-
-            // 盒体中心与半径
             const float cx = 0.5f * (minX + maxX);
-            const float cy = 0.5f * (minY + maxY);
             const float cz = 0.5f * (minZ + maxZ);
             const float hx = 0.5f * (maxX - minX);
-            const float hy = 0.5f * (maxY - minY);
             const float hz = 0.5f * (maxZ - minZ);
+            const float halfW = std::max(hx, hz);
 
-            // 高度轻微缩放：与平面膨胀反相，形成 Squash & Stretch
-            // 使用线性关系以保持“微小”变化；避免强行体积守恒导致过大起伏
-            const float yScale = 1.0f - 0.5f * amp * phase;
-
-            // 径向权重（XZ 平面），中心弱、边缘强，保证所有面在边界无裂缝
-            auto radialWeightXZ = [&](float x, float z) {
-                float dx = (x - cx) / (hx > 1e-6f ? hx : 1.0f);
-                float dz = (z - cz) / (hz > 1e-6f ? hz : 1.0f);
-                float r = std::sqrt(dx * dx + dz * dz);
-                if (r > 1.0f) r = 1.0f;
-                // 二次权重，边缘更明显
-                return r * r;
-            };
-
-            // 顶点形变：XZ 径向按权重缩放；Y 按统一 yScale 缩放
-            auto deform = [&](const glm::vec3& p) -> glm::vec3 {
-                float w = radialWeightXZ(p.x, p.z);
-                float s = 1.0f + amp * phase * w;
-
-                glm::vec3 q;
-                q.x = cx + (p.x - cx) * s;
-                q.z = cz + (p.z - cz) * s;
-                q.y = cy + (p.y - cy) * yScale;
-                return q;
-            };
-
-            // 面颜色：顶面亮、侧面略暗、底面再暗一点
             const glm::vec3 topColor = color;
             const glm::vec3 sideColor = color * 0.85f;
             const glm::vec3 bottomColor = color * 0.80f;
 
-            // 生成一个定轴面的细分网格并输出为三角形
-            // axis: 0->x 固定(±X侧面), 1->y 固定(顶/底), 2->z 固定(±Z侧面)
             auto emitFaceGrid = [&](int axis, float fixed,
                                     float u0, float u1, float v0, float v1,
-                                    const glm::vec3& faceColor) {
+                                    const glm::vec3& faceColor, const glm::vec2& n2) {
                 for (int i = 0; i < RES; ++i) {
                     float a0 = static_cast<float>(i) / RES;
                     float a1 = static_cast<float>(i + 1) / RES;
@@ -405,45 +470,44 @@ private:
                         float vv1 = v0 + (v1 - v0) * b1;
 
                         glm::vec3 p00, p10, p11, p01;
-                        if (axis == 1) {
-                            // y 固定（顶/底面）: (x,z) 网格
+                        if (axis == 1) { // 顶/底 (x,z)
                             p00 = glm::vec3(uu0, fixed, vv0);
                             p10 = glm::vec3(uu1, fixed, vv0);
                             p11 = glm::vec3(uu1, fixed, vv1);
                             p01 = glm::vec3(uu0, fixed, vv1);
-                        } else if (axis == 0) {
-                            // x 固定（±X 侧面）: (y,z) 网格
+                        } else if (axis == 0) { // ±X (y,z)
                             p00 = glm::vec3(fixed, uu0, vv0);
                             p10 = glm::vec3(fixed, uu1, vv0);
                             p11 = glm::vec3(fixed, uu1, vv1);
                             p01 = glm::vec3(fixed, uu0, vv1);
-                        } else {
-                            // z 固定（±Z 侧面）: (x,y) 网格
+                        } else { // ±Z (x,y)
                             p00 = glm::vec3(uu0, vv0, fixed);
                             p10 = glm::vec3(uu1, vv0, fixed);
                             p11 = glm::vec3(uu1, vv1, fixed);
                             p01 = glm::vec3(uu0, vv1, fixed);
                         }
 
-                        p00 = deform(p00);
-                        p10 = deform(p10);
-                        p11 = deform(p11);
-                        p01 = deform(p01);
+                        // 不再做 CPU 端形变
+                        auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
+                            float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
+                            float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
+                            return glm::vec3(xNorm, zNorm, halfW);
+                        };
 
-                        pushQuad(p00, p10, p11, p01, faceColor);
+                        pushSoftQuad(p00, p10, p11, p01, faceColor, n2, cx, cz, halfW);
                     }
                 }
             };
 
-            // 顶/底
-            emitFaceGrid(1, maxY, minX, maxX, minZ, maxZ, topColor);
-            emitFaceGrid(1, minY, minX, maxX, minZ, maxZ, bottomColor);
-            // ±X 侧面
-            emitFaceGrid(0, minX, minY, maxY, minZ, maxZ, sideColor);
-            emitFaceGrid(0, maxX, minY, maxY, minZ, maxZ, sideColor);
-            // ±Z 侧面
-            emitFaceGrid(2, minZ, minX, maxX, minY, maxY, sideColor);
-            emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor);
+            // 顶/底：aNormal = (0,0)
+            emitFaceGrid(1, maxY, minX, maxX, minZ, maxZ, topColor,   glm::vec2(0.0f, 0.0f));
+            emitFaceGrid(1, minY, minX, maxX, minZ, maxZ, bottomColor,glm::vec2(0.0f, 0.0f));
+            // ±X：aNormal = (±1,0)
+            emitFaceGrid(0, minX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2(-1.0f, 0.0f));
+            emitFaceGrid(0, maxX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2( 1.0f, 0.0f));
+            // ±Z：aNormal = (0,±1)
+            emitFaceGrid(2, minZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f,-1.0f));
+            emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f, 1.0f));
         };
 
         auto boundsForCell = [&](int gridX, int gridY) {
@@ -470,13 +534,13 @@ private:
         };
 
         auto drawPlayerAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, float idleT) {
-            const float inset = tileSize * 0.02f;
+            const float inset = tileSize * 0.10f;
             const float halfW = (tileSize * 0.5f) - inset;
             float minX = centerXZ.x - halfW;
             float maxX = centerXZ.x + halfW;
             float minZ = centerXZ.y - halfW;
             float maxZ = centerXZ.y + halfW;
-            appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05, idleT);
+            appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05f, idleT);
         };
 
         // 地面/墙体
@@ -492,14 +556,14 @@ private:
             }
         }
 
-        // 计算玩家插值
+        // 计算玩家插值 + 设置运动方向
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
             const Pos& e = next_state.player;
             glm::vec3 color(0.25f, 0.85f, 0.35f);
-            float height = 0.96f;
+            float height = 0.90f;
 
-            // 计算待机动画时间（周期由 idleDuration_ 控制）
+            // 待机动画时间（周期由 idleDuration_ 控制）
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
@@ -509,18 +573,25 @@ private:
             if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
                 glm::vec2 cs = centerForCell(s.x, s.y);
                 glm::vec2 ce = centerForCell(e.x, e.y);
+                glm::vec2 dir = ce - cs;
+                if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
+                else dir = glm::vec2(0.0f);
+                moveDirection_ = dir; // 供 softcubeShader_ 使用
+
                 glm::vec2 c = cs + (ce - cs) * moveT;
                 drawPlayerAtCenter(c, color, height, idleT);
             } else if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
+                moveDirection_ = glm::vec2(0.0f);
                 glm::vec2 c = centerForCell(s.x, s.y);
                 drawPlayerAtCenter(c, color, height, idleT);
             } else if (!moving_ && e.room == roomId) {
+                moveDirection_ = glm::vec2(0.0f);
                 glm::vec2 c = centerForCell(e.x, e.y);
                 drawPlayerAtCenter(c, color, height, idleT);
             }
         };
 
-        // 计算箱子插值
+        // 计算箱子插值（保持基础几何）
         auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color) {
             for (const auto& kv : boxes) {
                 int id = kv.first;
@@ -562,7 +633,6 @@ private:
 
         drawBoxes(state.boxes, next_state.boxes, glm::vec3(0.85f, 0.55f, 0.2f));
         drawBoxes(state.boxrooms, next_state.boxrooms, glm::vec3(0.4f, 0.35f, 0.7f));
-        // 玩家最后绘制，避免被箱子遮挡
         drawPlayer();
 
         return boardHalf;
@@ -573,15 +643,6 @@ private:
         if (cell == "=") return {0.25f, 0.6f, 0.3f};
         if (cell == "_") return {0.7f, 0.6f, 0.25f};
         return {0.15f, 0.15f, 0.15f};
-    }
-
-    void pushVertex(const glm::vec3& pos, const glm::vec3& color) {
-        vertexData_.push_back(pos.x);
-        vertexData_.push_back(pos.y);
-        vertexData_.push_back(pos.z);
-        vertexData_.push_back(color.r);
-        vertexData_.push_back(color.g);
-        vertexData_.push_back(color.b);
     }
 
     Input mapCameraRelativeInput(Input input) const {
@@ -636,7 +697,10 @@ private:
     // GL 资源
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
-    std::unique_ptr<Shader> shader_;
+    GLuint vaoSoft_ = 0;
+    GLuint vboSoft_ = 0;
+    std::unique_ptr<Shader> basicShader_;
+    std::unique_ptr<Shader> softcubeShader_;
     GLuint fbo_ = 0;
     std::vector<GLuint> roomTextures_;
     int textureWidth_ = 0;
@@ -648,6 +712,8 @@ private:
     int windowWidth_ = 0;
     int windowHeight_ = 0;
     std::vector<float> vertexData_;
+    std::vector<float> softVertexData_;
+    glm::vec2 moveDirection_{0.0f, 0.0f};
 
     // 2.5D 离散相机
     float cameraYaw_ = 0.0f;                // 0 -> +X

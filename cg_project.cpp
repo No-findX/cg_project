@@ -42,7 +42,7 @@ private:
 
     double lastFrameTime_ = 0.0;       // Timestamp of previous frame (for delta time).
     double lastInputTime_ = 0.0;       // Timestamp of last processed input (throttling).
-    const double inputCooldown_ = 0.5; // Minimum time between accepted inputs.
+    const double inputCooldown_ = 0.2; // Minimum time between accepted inputs.
     bool winAnnounced_ = false;        // Tracks whether win message was printed.
     bool gameStarted_ = false;         // Gated until the Start button is clicked.
 
@@ -53,7 +53,7 @@ private:
     // 位移动画时序
     bool animatingMove_ = false;
     double moveAnimStart_ = 0.0;
-    double moveAnimDuration_ = 0.3; // 缩短动画时长，提高轻快感
+    double moveAnimDuration_ = 0.2; // 缩短动画时长，提高轻快感
 
     // 动画末段输入缓存
     bool hasPendingInput_ = false;
@@ -173,7 +173,7 @@ void GameApplication::processInput() {
     auto isNearMoveEnd = [&]() -> bool {
         if (!animatingMove_) return false;
         double u = (now - moveAnimStart_) / moveAnimDuration_;
-        return u >= 0.5; // 末段判定阈值：80% 以后
+        return u >= 0.5; // 末段判定阈值：50% 以后
     };
 
     Input input = UP;
@@ -259,7 +259,6 @@ void GameApplication::processInput() {
 
         lastInputTime_ = now;
     } else {
-        // 相机旋转：仅当成功触发新旋转时才更新冷却时间，避免长按刷新冷却导致后续输入被意外推迟
         bool wasRotating = view_.isCameraRotating();
         view_.handleKey(viewRotate);
         bool nowRotating = view_.isCameraRotating();
