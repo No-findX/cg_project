@@ -339,6 +339,113 @@ private:
             pushQuad(bottom3, bottom0, top0, top3, sideColor);
         };
 
+        auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
+            const glm::vec3& color, float amp, float timeT) {
+            // 16x16 细分
+            const int RES = 16;
+            const float TWO_PI = 6.28318530718f;
+
+            // 周期相位：由 timeT (0..1) 推动
+            float phase = std::sin(TWO_PI * timeT);
+
+            // 盒体中心与半径
+            const float cx = 0.5f * (minX + maxX);
+            const float cy = 0.5f * (minY + maxY);
+            const float cz = 0.5f * (minZ + maxZ);
+            const float hx = 0.5f * (maxX - minX);
+            const float hy = 0.5f * (maxY - minY);
+            const float hz = 0.5f * (maxZ - minZ);
+
+            // 高度轻微缩放：与平面膨胀反相，形成 Squash & Stretch
+            // 使用线性关系以保持“微小”变化；避免强行体积守恒导致过大起伏
+            const float yScale = 1.0f - 0.5f * amp * phase;
+
+            // 径向权重（XZ 平面），中心弱、边缘强，保证所有面在边界无裂缝
+            auto radialWeightXZ = [&](float x, float z) {
+                float dx = (x - cx) / (hx > 1e-6f ? hx : 1.0f);
+                float dz = (z - cz) / (hz > 1e-6f ? hz : 1.0f);
+                float r = std::sqrt(dx * dx + dz * dz);
+                if (r > 1.0f) r = 1.0f;
+                // 二次权重，边缘更明显
+                return r * r;
+            };
+
+            // 顶点形变：XZ 径向按权重缩放；Y 按统一 yScale 缩放
+            auto deform = [&](const glm::vec3& p) -> glm::vec3 {
+                float w = radialWeightXZ(p.x, p.z);
+                float s = 1.0f + amp * phase * w;
+
+                glm::vec3 q;
+                q.x = cx + (p.x - cx) * s;
+                q.z = cz + (p.z - cz) * s;
+                q.y = cy + (p.y - cy) * yScale;
+                return q;
+            };
+
+            // 面颜色：顶面亮、侧面略暗、底面再暗一点
+            const glm::vec3 topColor = color;
+            const glm::vec3 sideColor = color * 0.85f;
+            const glm::vec3 bottomColor = color * 0.80f;
+
+            // 生成一个定轴面的细分网格并输出为三角形
+            // axis: 0->x 固定(±X侧面), 1->y 固定(顶/底), 2->z 固定(±Z侧面)
+            auto emitFaceGrid = [&](int axis, float fixed,
+                                    float u0, float u1, float v0, float v1,
+                                    const glm::vec3& faceColor) {
+                for (int i = 0; i < RES; ++i) {
+                    float a0 = static_cast<float>(i) / RES;
+                    float a1 = static_cast<float>(i + 1) / RES;
+                    float uu0 = u0 + (u1 - u0) * a0;
+                    float uu1 = u0 + (u1 - u0) * a1;
+
+                    for (int j = 0; j < RES; ++j) {
+                        float b0 = static_cast<float>(j) / RES;
+                        float b1 = static_cast<float>(j + 1) / RES;
+                        float vv0 = v0 + (v1 - v0) * b0;
+                        float vv1 = v0 + (v1 - v0) * b1;
+
+                        glm::vec3 p00, p10, p11, p01;
+                        if (axis == 1) {
+                            // y 固定（顶/底面）: (x,z) 网格
+                            p00 = glm::vec3(uu0, fixed, vv0);
+                            p10 = glm::vec3(uu1, fixed, vv0);
+                            p11 = glm::vec3(uu1, fixed, vv1);
+                            p01 = glm::vec3(uu0, fixed, vv1);
+                        } else if (axis == 0) {
+                            // x 固定（±X 侧面）: (y,z) 网格
+                            p00 = glm::vec3(fixed, uu0, vv0);
+                            p10 = glm::vec3(fixed, uu1, vv0);
+                            p11 = glm::vec3(fixed, uu1, vv1);
+                            p01 = glm::vec3(fixed, uu0, vv1);
+                        } else {
+                            // z 固定（±Z 侧面）: (x,y) 网格
+                            p00 = glm::vec3(uu0, vv0, fixed);
+                            p10 = glm::vec3(uu1, vv0, fixed);
+                            p11 = glm::vec3(uu1, vv1, fixed);
+                            p01 = glm::vec3(uu0, vv1, fixed);
+                        }
+
+                        p00 = deform(p00);
+                        p10 = deform(p10);
+                        p11 = deform(p11);
+                        p01 = deform(p01);
+
+                        pushQuad(p00, p10, p11, p01, faceColor);
+                    }
+                }
+            };
+
+            // 顶/底
+            emitFaceGrid(1, maxY, minX, maxX, minZ, maxZ, topColor);
+            emitFaceGrid(1, minY, minX, maxX, minZ, maxZ, bottomColor);
+            // ±X 侧面
+            emitFaceGrid(0, minX, minY, maxY, minZ, maxZ, sideColor);
+            emitFaceGrid(0, maxX, minY, maxY, minZ, maxZ, sideColor);
+            // ±Z 侧面
+            emitFaceGrid(2, minZ, minX, maxX, minY, maxY, sideColor);
+            emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor);
+        };
+
         auto boundsForCell = [&](int gridX, int gridY) {
             float minX = -boardHalf + gridX * tileSize;
             float maxX = minX + tileSize;
@@ -362,6 +469,16 @@ private:
             appendColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
         };
 
+        auto drawPlayerAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, float idleT) {
+            const float inset = tileSize * 0.02f;
+            const float halfW = (tileSize * 0.5f) - inset;
+            float minX = centerXZ.x - halfW;
+            float maxX = centerXZ.x + halfW;
+            float minZ = centerXZ.y - halfW;
+            float maxZ = centerXZ.y + halfW;
+            appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05, idleT);
+        };
+
         // 地面/墙体
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
@@ -382,19 +499,24 @@ private:
             glm::vec3 color(0.25f, 0.85f, 0.35f);
             float height = 0.96f;
 
+            // 计算待机动画时间（周期由 idleDuration_ 控制）
+            float idleT = 0.0f;
+            if (idleDuration_ > 1e-5f) {
+                float now = static_cast<float>(glfwGetTime());
+                idleT = std::fmod(now, idleDuration_) / idleDuration_;
+            }
+
             if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
                 glm::vec2 cs = centerForCell(s.x, s.y);
                 glm::vec2 ce = centerForCell(e.x, e.y);
                 glm::vec2 c = cs + (ce - cs) * moveT;
-                drawAtCenter(c, color, height);
+                drawPlayerAtCenter(c, color, height, idleT);
             } else if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
-                // 静止或跨房间：使用 s
                 glm::vec2 c = centerForCell(s.x, s.y);
-                drawAtCenter(c, color, height);
+                drawPlayerAtCenter(c, color, height, idleT);
             } else if (!moving_ && e.room == roomId) {
-                // 动画结束后落位到 e
                 glm::vec2 c = centerForCell(e.x, e.y);
-                drawAtCenter(c, color, height);
+                drawPlayerAtCenter(c, color, height, idleT);
             }
         };
 
@@ -550,6 +672,9 @@ private:
     bool moving_ = false;
     float moveDuration_ = 0.0f;
     float moveStartTime_ = 0.0f;
+
+    // 待机动画状态（玩家）
+    float idleDuration_ = 3.0f;
 };
 
 } // namespace detail
