@@ -197,6 +197,8 @@
     <None Include="model\levels\l1.json" />
     <None Include="view\shader\basic.frag" />
     <None Include="view\shader\basic.vert" />
+    <None Include="view\shader\softcube.frag" />
+    <None Include="view\shader\softcube.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
