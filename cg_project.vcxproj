@@ -186,6 +186,7 @@
   <ItemGroup>
     <ClInclude Include="model\include\gameplay.hpp" />
     <ClInclude Include="model\include\level_loader.hpp" />
+    <ClInclude Include="model\portal\portal.h" />
     <ClInclude Include="viewmodel\game_view_model.hpp" />
     <ClInclude Include="view\button.hpp" />
     <ClInclude Include="view\button_manager.hpp" />
