@@ -1,7 +1,10 @@
 #pragma once
 
+#define GLM_ENABLE_EXPERIMENTAL
+
 #include <algorithm>
 #include <iostream>
+#include <vector>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -9,25 +12,44 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/vector_angle.hpp>
 
+#include "../include/gameplay.hpp"
+
+
+// Describe which side of the block the portal is on
+enum PortalPosition {
+	XPos,
+	XNeg,
+	ZPos,
+	ZNeg
+};
 
 class Portal {
 public:
 	glm::vec3 position;
 	glm::vec3 normal;
+	
 	unsigned int fbo;
 	unsigned int texture;
 	unsigned int tempTexture;
 	unsigned int rbo;
+	int scrWidth;
+	int scrHeight;
 
-	unsigned int VAO_;
+	unsigned int portalVAO_;
+	unsigned int portalVBO_;
+	GLsizei portalVertexNum;
 	unsigned int wrapperVAO_;
+	unsigned int wrapperVBO_;
+	GLsizei wrapperVertexNum;
 
 	Portal* pairPortal;
+	Pos portalPos;
+	int boxroomID;
 
 	float height;
 	float width;
 
-	Portal(glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3 normal = glm::vec3(0.0f, 0.0f, 1.0f), GLFWwindow* window, float height = 2, float width = 1) {
+	Portal(Pos portalPos, int boxroomID, int scrHeight, int scrWidth, glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3 normal = glm::vec3(0.0f, 0.0f, 1.0f), float height = 2, float width = 1) {
 		this->position = position;
 		this->normal = glm::normalize(normal);
 
@@ -36,21 +58,54 @@ public:
 
 		this->height = height;
 		this->width = width;
+		this->portalPos = portalPos;
+		this->boxroomID = boxroomID;
 
-		createFBO(window);
+		this->scrWidth = scrWidth;
+		this->scrHeight = scrHeight;
+
+		createFBO(scrHeight, scrWidth);
+		createVAOs();
 	}
 
-	Portal(float posX = 0.0f, float posY = 0.0f, float posZ = 0.0f, float normX = 0.0f, float normY = 0.0f, GLFWwindow* window, float normZ = 1.0f, float height = 2, float width = 1) {
-		this->position = glm::vec3(posX, posY, posZ);
-		this->normal = glm::normalize(glm::vec3(normX, normY, normZ));
+	~Portal() {
+		if (portalVBO_) {
+			glDeleteBuffers(1, &portalVBO_);
+			portalVBO_ = 0;
+		}
+		if (portalVAO_) {
+			glDeleteVertexArrays(1, &portalVAO_);
+			portalVAO_ = 0;
+		}
+		if (wrapperVBO_) {
+			glDeleteBuffers(1, &wrapperVBO_);
+			wrapperVBO_ = 0;
+		}
+		if (wrapperVAO_) {
+			glDeleteVertexArrays(1, &wrapperVAO_);
+			wrapperVAO_ = 0;
+		}
+		if (texture) {
+			glDeleteTextures(GL_TEXTURE_2D, &texture);
+			texture = 0;
+		}
+		if (tempTexture) {
+			glDeleteTextures(GL_TEXTURE_2D, &tempTexture);
+			tempTexture = 0;
+		}
+		if (rbo) {
+			glDeleteRenderbuffers(1, &rbo);
+			rbo = 0;
+		}
+		if (fbo) {
+			glDeleteFramebuffers(1, &fbo);
+			fbo = 0;
+		}
+	}
 
-		fbo = texture = rbo = 0;
-		pairPortal = nullptr;
-
-		this->height = height;
+	void setSize(float width, float height) {
 		this->width = width;
-
-		createFBO(window);
+		this->height = height;
 	}
 
 	void setPairPortal(Portal* pair) {
@@ -58,13 +113,9 @@ public:
 		pair->pairPortal = this;
 	}
 
-	void createFBO(GLFWwindow* window) {
+	void createFBO(int scrHeight, int scrWidth) {
 		glGenFramebuffers(1, &fbo);
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
-		// Get screen dimensions
-		int width, height;
-		glfwGetFramebufferSize(window, &width, &height);
 
 		// Create color texture
 		glGenTextures(1, &texture);
@@ -73,8 +124,8 @@ public:
 			GL_TEXTURE_2D,
 			0,
 			GL_RGB,
-			width,
-			height,
+			scrWidth,
+			scrHeight,
 			0,
 			GL_RGB,
 			GL_UNSIGNED_BYTE,
@@ -98,8 +149,8 @@ public:
 		glRenderbufferStorage(
 			GL_RENDERBUFFER,
 			GL_DEPTH24_STENCIL8,
-			width,
-			height
+			scrWidth,
+			scrHeight
 		);
 
 		glFramebufferRenderbuffer(
@@ -116,8 +167,8 @@ public:
 			GL_TEXTURE_2D,
 			0,
 			GL_RGB,
-			width,
-			height,
+			scrWidth,
+			scrHeight,
 			0,
 			GL_RGB,
 			GL_UNSIGNED_BYTE,
@@ -134,6 +185,10 @@ public:
 		// Unbind
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
+
+	void resizeTexture(int scrWidth, int scrHeight) {
+
 	}
 
 	glm::mat4 getModelMatrix() {
@@ -178,24 +233,13 @@ public:
 		return pairPortal->getPortalClippingPlane();
 	}
 
-	// Only call this function once!
-	unsigned int getPortalVAO() {
-		float vertices[] = {
-			-(width / 2), -(height / 2), 0.0f,		0.0f, 0.0f,
-			 (width / 2), -(height / 2), 0.0f,		1.0f, 0.0f,
-			 (width / 2),  (height / 2), 0.0f,		1.0f, 1.0f,
-			 (width / 2),  (height / 2), 0.0f,		1.0f, 1.0f,
-			-(width / 2),  (height / 2), 0.0f,		0.0f, 1.0f,
-			-(width / 2), -(height / 2), 0.0f,		0.0f, 0.0f,
-		};
-		unsigned portalVBO, portalVAO;
-		glGenVertexArrays(1, &portalVAO);
-		glGenBuffers(1, &portalVBO);
-
-		glBindVertexArray(portalVAO);
-
-		glBindBuffer(GL_ARRAY_BUFFER, portalVBO);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+	void createVAOs() {
+		// Portal VAO
+		glGenVertexArrays(1, &portalVAO_);
+		glGenBuffers(1, &portalVBO_);
+		glBindVertexArray(portalVAO_);
+		glBindBuffer(GL_ARRAY_BUFFER, portalVBO_);
+		glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_STATIC_DRAW);
 		
 		// position attribute
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
@@ -204,64 +248,15 @@ public:
 		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
 		glEnableVertexAttribArray(1);
 
-		this->VAO_ = portalVAO;
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
 
-		return portalVAO;
-	}
-
-	// Call only once per portal!
-	unsigned int getWrapperVAO(float height = 2.1, float width = 1.1, glm::vec3 color = glm::vec3(0.0f, 0.0f, 0.0f)) {
-		float vertices[] = {
-		-(width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		-(width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-
-		-(width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-
-		-(width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-
-		 (width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-
-		-(width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2), -(height / 2), -0.5f,    color.x, color.y, color.z,
-
-		-(width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		 (width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2),  (height / 2), -0.1f,    color.x, color.y, color.z,
-		-(width / 2),  (height / 2), -0.5f,    color.x, color.y, color.z,
-		};
-		unsigned wrapperVBO, wrapperVAO;
-		glGenVertexArrays(1, &wrapperVAO);
-		glGenBuffers(1, &wrapperVBO);
-
-		glBindVertexArray(wrapperVAO);
-
-		glBindBuffer(GL_ARRAY_BUFFER, wrapperVBO);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+		// Wrapper VAO
+		glGenVertexArrays(1, &wrapperVAO_);
+		glGenBuffers(1, &wrapperVBO_);
+		glBindVertexArray(wrapperVAO_);
+		glBindBuffer(GL_ARRAY_BUFFER, wrapperVBO_);
+		glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_STATIC_DRAW);
 
 		// position attribute
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
@@ -270,8 +265,131 @@ public:
 		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
 		glEnableVertexAttribArray(1);
 
-		this->wrapperVAO_ = wrapperVAO;
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+	}
 
-		return wrapperVAO;
+	void setVAOs(glm::vec3 color = glm::vec3(0.0f, 0.0f, 0.0f), float thickness = 0.1f) {
+		// Build wrapper (frame) vertices programmatically. The frame is the outer rectangle minus an inner rectangle
+		// Outer rectangle extents
+		float halfW = width / 2.0f;
+		float halfH = height / 2.0f;
+		// Thickness defines the frame inset and the depth (z size)
+		float t = thickness;
+		float halfT = t / 2.0f;
+		float innerHalfW = std::max(0.0f, halfW - t);
+		float innerHalfH = std::max(0.0f, halfH - t);
+		float zFront = t;
+		float zBack = 0.0f;
+
+		// Build portal surface by hand first
+		float portalVertices[] = {
+			-innerHalfW, -innerHalfH, halfT,		0.0f, 0.0f,
+			 innerHalfW, -innerHalfH, halfT,		1.0f, 0.0f,
+			 innerHalfW,  innerHalfH, halfT,		1.0f, 1.0f,
+			 innerHalfW,  innerHalfH, halfT,		1.0f, 1.0f,
+			-innerHalfW,  innerHalfH, halfT,		0.0f, 1.0f,
+			-innerHalfW, -innerHalfH, halfT,		0.0f, 0.0f,
+		};
+
+		auto pushVertex = [&](std::vector<float>& buf, float x, float y, float z) {
+			buf.push_back(x);
+			buf.push_back(y);
+			buf.push_back(z);
+			buf.push_back(color.x);
+			buf.push_back(color.y);
+			buf.push_back(color.z);
+		};
+
+		auto addQuad = [&](std::vector<float>& buf,
+			const glm::vec3& v0,
+			const glm::vec3& v1,
+			const glm::vec3& v2,
+			const glm::vec3& v3) {
+			// two triangles: v0,v1,v2 and v2,v3,v0
+			pushVertex(buf, v0.x, v0.y, v0.z);
+			pushVertex(buf, v1.x, v1.y, v1.z);
+			pushVertex(buf, v2.x, v2.y, v2.z);
+			pushVertex(buf, v2.x, v2.y, v2.z);
+			pushVertex(buf, v3.x, v3.y, v3.z);
+			pushVertex(buf, v0.x, v0.y, v0.z);
+		};
+
+		std::vector<float> wrapper;
+
+		// Define corner arrays (order: 0 = bottom-left, 1 = bottom-right, 2 = top-right, 3 = top-left)
+		glm::vec3 outerFront[4] = {
+			glm::vec3(-halfW, -halfH, zFront),
+			glm::vec3( halfW, -halfH, zFront),
+			glm::vec3( halfW,  halfH, zFront),
+			glm::vec3(-halfW,  halfH, zFront)
+		};
+		glm::vec3 outerBack[4] = {
+			glm::vec3(-halfW, -halfH, zBack),
+			glm::vec3( halfW, -halfH, zBack),
+			glm::vec3( halfW,  halfH, zBack),
+			glm::vec3(-halfW,  halfH, zBack)
+		};
+
+		glm::vec3 innerFront[4] = {
+			glm::vec3(-innerHalfW, -innerHalfH, zFront),
+			glm::vec3( innerHalfW, -innerHalfH, zFront),
+			glm::vec3( innerHalfW,  innerHalfH, zFront),
+			glm::vec3(-innerHalfW,  innerHalfH, zFront)
+		};
+		glm::vec3 innerBack[4] = {
+			glm::vec3(-innerHalfW, -innerHalfH, zBack),
+			glm::vec3( innerHalfW, -innerHalfH, zBack),
+			glm::vec3( innerHalfW,  innerHalfH, zBack),
+			glm::vec3(-innerHalfW,  innerHalfH, zBack)
+		};
+
+		// Front quads for each edge (top, bottom, left, right)
+		// Top
+		addQuad(wrapper, outerFront[3], outerFront[2], innerFront[2], innerFront[3]);
+		// Right
+		addQuad(wrapper, outerFront[2], outerFront[1], innerFront[1], innerFront[2]);
+		// Bottom
+		addQuad(wrapper, outerFront[1], outerFront[0], innerFront[0], innerFront[1]);
+		// Left
+		addQuad(wrapper, outerFront[0], outerFront[3], innerFront[3], innerFront[0]);
+
+		// Back quads (same as front but on back plane)
+		// Top
+		addQuad(wrapper, innerBack[3], innerBack[2], outerBack[2], outerBack[3]);
+		// Right
+		addQuad(wrapper, innerBack[2], innerBack[1], outerBack[1], outerBack[2]);
+		// Bottom
+		addQuad(wrapper, innerBack[1], innerBack[0], outerBack[0], outerBack[1]);
+		// Left
+		addQuad(wrapper, innerBack[0], innerBack[3], outerBack[3], outerBack[0]);
+
+		// Side faces for outer rectangle (connect front->back)
+		for (int i = 0; i < 4; ++i) {
+			int ni = (i + 1) % 4;
+			addQuad(wrapper, outerFront[i], outerFront[ni], outerBack[ni], outerBack[i]);
+		}
+
+		// Side faces for inner rectangle (connect front->back), wound opposite so normals point inward correctly
+		for (int i = 0; i < 4; ++i) {
+			int ni = (i + 1) % 4;
+			// reverse order to flip normal
+			addQuad(wrapper, innerFront[ni], innerFront[i], innerBack[i], innerBack[ni]);
+		}
+
+		// Upload portalVertices to portal VBO
+		glBindVertexArray(portalVAO_);
+		glBindBuffer(GL_ARRAY_BUFFER, portalVBO_);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(portalVertices), portalVertices, GL_STATIC_DRAW);
+		this->portalVertexNum = static_cast<GLsizei>(6);
+
+		// Upload wrapper vertices to wrapper VBO
+		glBindVertexArray(wrapperVAO_);
+		glBindBuffer(GL_ARRAY_BUFFER, wrapperVBO_);
+		glBufferData(GL_ARRAY_BUFFER, wrapper.size() * sizeof(float), wrapper.data(), GL_STATIC_DRAW);
+		this->wrapperVertexNum = static_cast<GLsizei>(wrapper.size() / 6);
+
+		// Unbind
+		glBindVertexArray(0);
 	}
 };

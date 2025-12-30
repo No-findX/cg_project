@@ -23,6 +23,7 @@
 #include "model/include/level_loader.hpp"
 #include "view/uimanager.hpp"
 #include "view/shader.hpp"
+#include "model/portal/portal.h"
 
 namespace detail {
 
@@ -37,6 +38,7 @@ public:
         // 使用封装的 Shader 类从文件加载
         basicShader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
         softcubeShader_ = std::make_unique<Shader>("view/shader/softcube.vert", "view/shader/softcube.frag");
+        portalSurfaceShader_ = std::make_unique<Shader>("view/shader/portalSurf.vert", "view/shader/portalSurf.frag");
 
         // 基础几何（pos3 + color3）
         glGenVertexArrays(1, &vao_);
@@ -208,12 +210,28 @@ public:
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
+        // New: render portals
         if (state.player.room >= 0 && state.player.room < static_cast<int>(level.rooms.size())) {
+            // Toll portals in current room
+            std::vector<Portal*> portalsToRender;
+            for (const auto& portal : portalsList) {
+                if (portal->portalPos.room == state.player.room) {
+                    portalsToRender.push_back(portal);
+                }
+            }
+
+            // Initialize all portals with recursive render
+            glm::mat4 cameraView = getCameraView(level.rooms[state.player.room], tileWorldSize_);
+            for (const auto& portal : portalsToRender) {
+                renderPortalRecursive(portal, cameraView, 5, state, level, next_state, moveT);
+            }
+
+            // Render scene: now use renderRoomIndexWithPortals
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, windowWidth_, windowHeight_);
             glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
-            renderRoomIndex(state.player.room, state, level, next_state, moveT);
+            renderRoomIndexWithPortals(state.player.room, portalsToRender, nullptr, state, level, next_state, moveT);
         }
     }
 
@@ -242,6 +260,10 @@ public:
             glDeleteProgram(softcubeShader_->ID);
             softcubeShader_.reset();
         }
+        if (portalSurfaceShader_) {
+            glDeleteProgram(portalSurfaceShader_->ID);
+            portalSurfaceShader_.reset();
+        }
         if (fbo_) {
             glDeleteFramebuffers(1, &fbo_);
             fbo_ = 0;
@@ -249,6 +271,61 @@ public:
         if (!roomTextures_.empty()) {
             glDeleteTextures(static_cast<GLsizei>(roomTextures_.size()), roomTextures_.data());
             roomTextures_.clear();
+        }
+    }
+
+    void registerPortals(std::array<int, 2> entry, int boxroomID, Pos boxroomPos, const Room& outerRoom, const Room& boxroom, int scrWidth, int scrHeight) {
+        int y = entry[0];
+        int x = entry[1];
+        
+        Pos outerPortalPos = boxroomPos;
+        Pos innerPortalPos = {boxroomID, x, y};
+        
+        PortalPosition relativePos;
+        glm::vec3 innerNormal, outerNormal;
+        if (x == 0) {
+            relativePos = XNeg;
+            outerNormal = glm::vec3(-1, 0, 0);
+            innerNormal = glm::vec3(1, 0, 0);
+        }
+        else if (x == boxroom.size - 1) {
+            relativePos = XPos;
+            outerNormal = glm::vec3(1, 0, 0);
+            innerNormal = glm::vec3(-1, 0, 0);
+        }
+        else if (y == 0) {
+            relativePos = ZPos;
+            outerNormal = glm::vec3(0, 0, 1);
+            innerNormal = glm::vec3(0, 0, -1);
+        }
+        else if (y == boxroom.size - 1) {
+            relativePos = ZNeg;
+            outerNormal = glm::vec3(0, 0, -1);
+            innerNormal = glm::vec3(0, 0, 1);
+        }
+        else {
+            std::cerr << "ERROR: invalid portal position at " << boxroomID
+                << ", (" << x << ", " << y << ")" << std::endl;
+            return;
+        }
+
+        glm::vec3 innerWorldPos = computePortalPosition(boxroom, innerPortalPos.x, innerPortalPos.y, relativePos, tileWorldSize_, 0.96f);
+        glm::vec3 outerWorldPos = computePortalPosition(outerRoom, outerPortalPos.x, outerPortalPos.y, relativePos, tileWorldSize_, 0.96f);
+
+        Portal* portalOutside = new Portal(outerPortalPos, boxroomID, scrHeight, scrWidth, outerWorldPos, outerNormal, 0.96f, tileWorldSize_ * 0.96f);
+        Portal* portalInBox = new Portal(innerPortalPos, boxroomID, scrHeight, scrWidth, innerWorldPos, innerNormal, 0.96f, tileWorldSize_ * 0.96f);
+        portalOutside->setPairPortal(portalInBox);
+        portalInBox->setPairPortal(portalOutside);
+        portalOutside->setVAOs();
+        portalInBox->setVAOs();
+
+        portalsList.push_back(portalOutside);
+        portalsList.push_back(portalInBox);
+    }
+
+    void clearPortals(void) {
+        for (const auto portal : portalsList) {
+            delete portal;
         }
     }
 
@@ -282,8 +359,42 @@ private:
         }
     }
 
+    // New: Separate camera view calculation from renderRoomIndex
+    glm::mat4 getCameraView(const Room& room, const float tileSize) {
+        const int tileCount = room.size;
+        const float boardHalf = tileCount * tileSize * 0.5f;
+
+        glm::vec3 front;
+        float yawRad = glm::radians(cameraYaw_);
+        float pitchRad = glm::radians(cameraPitch_);
+        front.x = std::cos(pitchRad) * std::cos(yawRad);
+        front.y = std::sin(pitchRad);
+        front.z = std::cos(pitchRad) * std::sin(yawRad);
+        front = glm::normalize(front);
+
+        /*cameraForward2D_ = glm::vec2(front.x, front.z);
+        if (glm::dot(cameraForward2D_, cameraForward2D_) > 1e-5f) {
+            cameraForward2D_ = glm::normalize(cameraForward2D_);
+        }
+        else {
+            cameraForward2D_ = glm::vec2(1.0f, 0.0f);
+        }*/
+
+        glm::vec3 roomCenter = glm::vec3(0.0f, 0.02f, 0.0f);
+        glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
+        glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
+
+        glm::vec3 cameraPos = roomCenter + offsetDir * boardHalf + glm::vec3(0.0f, 3.0f, 0.0f);
+        glm::mat4 viewMatrix = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        return viewMatrix;
+    }
+
     // 新增：支持插值渲染，依据 state 与 next_state 以及 moveT
-    void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT) {
+    // Now features model matrix (basicShader_), clip plane toggling and virtual view toggling
+    void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT,
+                         bool enableClip = false, glm::vec4 clipPlane = glm::vec4(0.0f), bool enableVirtualView = false, glm::mat4 virtualView = glm::mat4(0.0f))
+    {
         if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
@@ -294,7 +405,7 @@ private:
 
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
-        glm::vec3 front;
+        /*glm::vec3 front;
         float yawRad = glm::radians(cameraYaw_);
         float pitchRad = glm::radians(cameraPitch_);
         front.x = std::cos(pitchRad) * std::cos(yawRad);
@@ -314,13 +425,18 @@ private:
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
         glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
-        view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));*/
+
+        glm::mat4 viewToUse = enableVirtualView ? virtualView : getCameraView(room, tileWorldSize_);
 
         // 绘制静态几何（地面/墙/箱子）
         if (!vertexData_.empty()) {
             basicShader_->use();
-            basicShader_->setMat4("view", view_);
+            basicShader_->setMat4("model", glm::mat4(1.0f));
+            basicShader_->setMat4("view", viewToUse);
             basicShader_->setMat4("projection", projection_);
+            basicShader_->setVec4("clipPlane", clipPlane);
+            basicShader_->setBool("enableClip", enableClip);
 
             glBindVertexArray(vao_);
             glBindBuffer(GL_ARRAY_BUFFER, vbo_);
@@ -333,10 +449,12 @@ private:
         // 绘制角色（软体立方体 + 着色器形变）
         if (!softVertexData_.empty() && softcubeShader_) {
             softcubeShader_->use();
-            softcubeShader_->setMat4("view", view_);
+            softcubeShader_->setMat4("view", viewToUse);
             softcubeShader_->setMat4("projection", projection_);
             softcubeShader_->setVec2("direction", moveDirection_);
             softcubeShader_->setFloat("moveT", moveT);
+            softcubeShader_->setVec4("clipPlane", clipPlane);
+            softcubeShader_->setBool("enableClip", enableClip);
 
             // 待机时间（周期 idleDuration_）
             float idleT = 0.0f;
@@ -645,6 +763,179 @@ private:
         return {0.15f, 0.15f, 0.15f};
     }
 
+    glm::vec3 computePortalPosition(const Room& room, int gx, int gy, PortalPosition pos, float tileSize, float portalHeight, float baseY = 0.02f, float epsilon = 0.01f) {
+        float boardHalf = room.size * tileSize * 0.5f;
+        float minX = -boardHalf + gx * tileSize;
+        float maxX = minX + tileSize;
+        float maxZ = boardHalf - gy * tileSize;
+        float minZ = maxZ - tileSize;
+        float cx = 0.5f * (minX + maxX);
+        float cz = 0.5f * (minZ + maxZ);
+        glm::vec3 position(0.0f);
+
+        switch (pos) {
+        case XPos:
+            position = glm::vec3(maxX + epsilon, baseY + portalHeight * 0.5f, cz);
+            break;
+        case XNeg:
+            position = glm::vec3(minX - epsilon, baseY + portalHeight * 0.5f, cz);
+            break;
+        case ZPos:
+            position = glm::vec3(cx, baseY + portalHeight * 0.5f, maxZ + epsilon);
+            break;
+        case ZNeg:
+            position = glm::vec3(cx, baseY + portalHeight * 0.5f, minZ - epsilon);
+            break;
+        }
+
+        return position;
+    }
+
+    // New: Render the scene with portals
+    // The portals to be rendered are given in portalsToRender.
+    void renderRoomIndexWithPortals(int roomId, std::vector<Portal*> portalsToRender, Portal* checkCurrent, const GameState& state, const Level& level, const GameState& next_state, float moveT,
+        bool enableClip = false, glm::vec4 clipPlane = glm::vec4(0.0f), bool enableVirtualView = false, glm::mat4 virtualView = glm::mat4(0.0f))
+    {
+        if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
+        const Room& room = level.rooms[roomId];
+        if (room.size <= 0) return;
+        glm::mat4 viewToUse = enableVirtualView ? virtualView : getCameraView(room, tileWorldSize_);
+
+        // Render the rest of the room first, without portals
+        renderRoomIndex(roomId, state, level, next_state, moveT,
+            enableClip, clipPlane,
+            enableVirtualView, virtualView);
+
+        // Render portals
+        for (const auto& portal : portalsToRender) {
+            // Render portal wrapper (frame)
+            basicShader_->use();
+            basicShader_->setMat4("model", portal->getModelMatrix());
+            basicShader_->setMat4("view", viewToUse);
+            basicShader_->setMat4("projection", projection_);
+            basicShader_->setVec4("clipPlane", clipPlane);
+            basicShader_->setBool("enableClip", enableClip);
+
+            glBindVertexArray(portal->wrapperVAO_);
+            glDrawArrays(GL_TRIANGLES, 0, portal->wrapperVertexNum);
+            glBindVertexArray(0);
+
+            // Render portal surface
+            portalSurfaceShader_->use();
+            portalSurfaceShader_->setMat4("model", portal->getModelMatrix());
+            portalSurfaceShader_->setMat4("view", viewToUse);
+            portalSurfaceShader_->setMat4("projection", projection_);
+            portalSurfaceShader_->setVec4("clipPlane", clipPlane);
+            portalSurfaceShader_->setBool("enableClip", enableClip);
+
+            glBindVertexArray(portal->portalVAO_);
+            unsigned int texID = (portal == checkCurrent) ? portal->tempTexture : portal->texture;
+            glBindTexture(GL_TEXTURE_2D, texID);
+            glDrawArrays(GL_TRIANGLES, 0, portal->portalVertexNum);
+            glBindVertexArray(0);
+        }
+
+        glUseProgram(0);
+    }
+
+    // A recursive function that renders portal textures.
+    // currentPortal: The portal currently being rendered
+    // view: Current view matrix to observe the current portal
+    // depth: Remaining recursion depth
+    void renderPortalRecursive(Portal* currentPortal, glm::mat4 view, int depth, const GameState& state, const Level& level, const GameState& next_state, float moveT) {
+        // Between a pair of portals, the recursion *only* updates the texture of the *current* portal!
+        // The other portal is always used as a view point, and is NEVER visible!
+
+        // 0. Calculate Virtual View
+        // This is the view out of pairPortal.
+        glm::mat4 virtualView = currentPortal->getPortalCameraView(view);
+        Portal* pairPortal = currentPortal->pairPortal;
+
+        // 1. Base Case: End of recursion
+        // At deepest level: render scene without portal
+        if (depth <= 0) {
+            // Set Up: Render pairPortal's view to FBO (currentPortal)
+            glBindFramebuffer(GL_FRAMEBUFFER, currentPortal->fbo);
+            glEnable(GL_DEPTH_TEST);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            // Enable clipping plane
+            glEnable(GL_CLIP_DISTANCE0);
+
+            // Render the scene without portals
+            renderRoomIndex(pairPortal->portalPos.room, state, level, next_state, moveT,
+                true, currentPortal->getPairPortalClippingPlane(),
+                true, virtualView);
+
+            // Disable clipping plane
+            glDisable(GL_CLIP_DISTANCE0);
+
+            // Unbind
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            return;
+        }        
+
+        // 2. Deepest First: Recursively render deeper levels FIRST!
+        // We need to ensure that all other portals in the room of pairPortal already has the newest texture.
+        // First toll portals in the room of pairPortal, then calc depth, finally recursively render.
+        // Keep in mind that pairPortal is never rendered in this recursion!
+        std::vector<Portal*> portalsToRender;
+        int pairRoomID = pairPortal->portalPos.room;
+        bool renderCurrent = false;
+        
+        for (const auto& portal : portalsList) {
+            if (portal->portalPos.room == pairRoomID && portal != pairPortal) {
+                portalsToRender.push_back(portal);
+                if (currentPortal == portal) {
+                    renderCurrent = true;
+                }
+            }
+        }
+
+        int nextDepth = std::max(depth - static_cast<int>(portalsToRender.size()), 0);
+        for (const auto& portal : portalsToRender) {
+            renderPortalRecursive(portal, virtualView, nextDepth, state, level, next_state, moveT);
+        }
+
+        // 3. Texture Copy (Optional)
+        // This is only necessary if we are about to render currentPortal,
+        // i.e. currentPortal is in the same room as pairPortal.
+        // currentPortal->texture contains the texture from level depth-1.
+        // We need to copy it to tempTexture, since we are about to write to texture (FBO).
+
+        if (renderCurrent) {
+            // Bind FBO as source
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, currentPortal->fbo);
+            glBindTexture(GL_TEXTURE_2D, currentPortal->tempTexture);
+
+            // Copy content from FBO to tempTexture
+            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, currentPortal->scrWidth, currentPortal->scrHeight);
+
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+
+        // 4. Set Up: Render pairPortal's view to FBO (currentPortal)
+        glBindFramebuffer(GL_FRAMEBUFFER, currentPortal->fbo);
+        glEnable(GL_DEPTH_TEST);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Enable clipping plane
+        glEnable(GL_CLIP_DISTANCE0);
+
+        // 5. Render the Scene
+        // Draw other scene obj.s and all portals in the room
+        renderRoomIndexWithPortals(pairPortal->portalPos.room, portalsToRender, currentPortal, state, level, next_state, moveT,
+            true, currentPortal->getPairPortalClippingPlane(),
+            true, virtualView);
+
+        // Disable clipping plane
+        glDisable(GL_CLIP_DISTANCE0);
+
+        // Unbind
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
     Input mapCameraRelativeInput(Input input) const {
         glm::vec2 forward;
         {
@@ -741,6 +1032,10 @@ private:
 
     // 待机动画状态（玩家）
     float idleDuration_ = 3.0f;
+
+    // New: portals
+    std::vector<Portal*> portalsList;
+    std::unique_ptr<Shader> portalSurfaceShader_;
 };
 
 } // namespace detail
@@ -780,6 +1075,18 @@ public:
         }
         if (!renderedScene) {
             uiManager_.render();
+        }
+    }
+
+    // New: register portals from level
+    /// @brief Register portals from loaded level & initial state
+    /// @details Create portals using input level, initial state and other info, call once after loading a new level
+    void registerPortals(const GameState& initialState, const Level* level, int scrWidth, int scrHeight) {
+        for (const auto& [rid, boxroomPos] : initialState.boxrooms) {
+            Room boxroom = level->rooms[rid];
+            for (const auto& entry : boxroom.entries) {
+                renderer_.registerPortals(entry, rid, boxroomPos, level->rooms[boxroomPos.room], boxroom, scrWidth, scrHeight);
+            }
         }
     }
 

@@ -11,6 +11,10 @@ uniform vec2 direction; // XZ 运动方向（单位向量或(0,0)）
 uniform float moveT;    // 0..1
 uniform float idleT;    // 0..1
 
+// For portals
+uniform vec4 clipPlane;
+uniform bool enableClip;
+
 out vec3 vColor;
 
 // 待机 Squash & Stretch：XZ 径向膨胀/收缩，Y 反向微缩放
@@ -96,4 +100,10 @@ void main() {
     vec3 p = movingPos(pIdle, aNormal, aTex, direction, moveT);
 
     gl_Position = projection * view * vec4(p, 1.0);
+
+    // Clipping for portals
+    if (enableClip) {
+        vec4 worldPos4dim = vec4(p, 1.0);
+        gl_ClipDistance[0] = dot(worldPos4dim, clipPlane);
+    }
 }

@@ -91,6 +91,10 @@ bool GameApplication::init() {
         std::cerr << "Failed to load default level. Game will run without logic." << std::endl;
     }
 
+    int scrWidth, scrHeight;
+    glfwGetFramebufferSize(window_, &scrWidth, &scrHeight);
+    view_.registerPortals(viewModel_.getState(), viewModel_.getLevel(), scrWidth, scrHeight);
+
     lastFrameTime_ = glfwGetTime();
     return true;
 }

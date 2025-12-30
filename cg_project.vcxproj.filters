@@ -53,6 +53,9 @@
     <ClInclude Include="view\shader.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="model\portal\portal.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="view\shader\basic.frag">
@@ -69,6 +72,12 @@
     </None>
     <None Include="model\levels\l1.json">
       <Filter>资源文件</Filter>
+    </None>
+    <None Include="view\shader\portalSurf.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\portalSurf.vert">
+      <Filter>源文件</Filter>
     </None>
   </ItemGroup>
 </Project>
