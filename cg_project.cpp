@@ -42,13 +42,17 @@ private:
 
     double lastFrameTime_ = 0.0;       // Timestamp of previous frame (for delta time).
     double lastInputTime_ = 0.0;       // Timestamp of last processed input (throttling).
-    const double inputCooldown_ = 0.5; // Minimum time between accepted inputs.
+    const double inputCooldown_ = 0.6; // Minimum time between accepted inputs (略大于旋转动画时长0.5s)
     bool winAnnounced_ = false;        // Tracks whether win message was printed.
     bool gameStarted_ = false;         // Gated until the Start button is clicked.
 
     GameState cachedState_{};          // Local copy of game state used for rendering.
     GameState cachedNextState_{};
     bool hasCachedState_ = false;      // Whether cachedState_ currently holds a valid snapshot.
+
+    // 键盘去抖：记录上一帧的按键状态
+    bool lastKeyUPressed_ = false;
+    bool lastKeyIPressed_ = false;
 
     // 位移动画时序
     bool animatingMove_ = false;
@@ -200,12 +204,22 @@ void GameApplication::processInput() {
     }
 
     if (glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS) {
-        viewRotate = GLFW_KEY_U;
-        hasInput = true;
-    }
-    else if (glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS) {
-        viewRotate = GLFW_KEY_I;
-        hasInput = true;
+        if (!lastKeyUPressed_) { // 只在按下瞬间触发(边沿检测)
+            viewRotate = GLFW_KEY_U;
+            hasInput = true;
+        }
+        lastKeyUPressed_ = true;
+    } else {
+        lastKeyUPressed_ = false;
+        if (glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS) {
+            if (!lastKeyIPressed_) { // 只在按下瞬间触发(边沿检测)
+                viewRotate = GLFW_KEY_I;
+                hasInput = true;
+            }
+            lastKeyIPressed_ = true;
+        } else {
+            lastKeyIPressed_ = false;
+        }
     }
 
     if (!hasInput) {

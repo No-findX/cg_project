@@ -23,6 +23,7 @@
 #include "model/include/level_loader.hpp"
 #include "view/uimanager.hpp"
 #include "view/shader.hpp"
+#include "view/gamelight.hpp"
 
 namespace detail {
 
@@ -37,7 +38,12 @@ public:
         textureHeight_ = windowHeight_;
 
         // 使用封装的 Shader 类从文件加载
-        shader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
+        shader_ = std::make_unique<Shader>("view/shader/pbr.vert", "view/shader/pbr.frag");
+        
+        // 初始化光照系统
+        lightingSystem_ = std::make_unique<LabLightingSystem>();
+        depthShader_ = std::make_unique<Shader>("view/shader/shadow_depth.vert", "view/shader/shadow_depth.frag");
+        setupShadowResources();
 
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);
@@ -46,9 +52,11 @@ public:
         glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
 
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(6 * sizeof(float)));
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
@@ -116,8 +124,11 @@ public:
         if (rotating_) {
             const float now = static_cast<float>(glfwGetTime());
             float elapsed = now - rotateStartTime_;
-            if (elapsed >= rotateDuration_) {
+            if (elapsed >= rotateDuration_ * 0.98f) { // 允许2%容错提前完成
                 cameraYaw_ = rotateTargetYaw_;
+                // 规范化到 [-180, 180] 范围，防止长期累积
+                while (cameraYaw_ > 180.0f) cameraYaw_ -= 360.0f;
+                while (cameraYaw_ < -180.0f) cameraYaw_ += 360.0f;
                 rotating_ = false;
             } else {
                 float u = elapsed / rotateDuration_;
@@ -211,6 +222,10 @@ public:
             glDeleteProgram(shader_->ID);
             shader_.reset();
         }
+        if (depthShader_) {
+            glDeleteProgram(depthShader_->ID);
+            depthShader_.reset();
+        }
         if (fbo_) {
             glDeleteFramebuffers(1, &fbo_);
             fbo_ = 0;
@@ -218,6 +233,14 @@ public:
         if (!roomTextures_.empty()) {
             glDeleteTextures(static_cast<GLsizei>(roomTextures_.size()), roomTextures_.data());
             roomTextures_.clear();
+        }
+        if (depthMap_) {
+            glDeleteTextures(1, &depthMap_);
+            depthMap_ = 0;
+        }
+        if (depthMapFBO_) {
+            glDeleteFramebuffers(1, &depthMapFBO_);
+            depthMapFBO_ = 0;
         }
     }
 
@@ -251,13 +274,63 @@ private:
         }
     }
 
-    // 新增：支持插值渲染，依据 state 与 next_state 以及 moveT
+    void setupShadowResources() {
+        glGenFramebuffers(1, &depthMapFBO_);
+        glGenTextures(1, &depthMap_);
+        glBindTexture(GL_TEXTURE_2D, depthMap_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, shadowMapResolution_, shadowMapResolution_, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap_, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+ 
+    glm::mat4 calculateLightSpaceMatrix(const glm::vec3& roomCenter, float halfExtent) const {
+        float orthoRange = halfExtent + 4.0f;
+        glm::mat4 lightProjection = glm::ortho(-orthoRange, orthoRange, -orthoRange, orthoRange, 0.1f, 50.0f);
+        glm::vec3 lightDir = glm::normalize(lightingSystem_->getMainLight().direction);
+        glm::vec3 lightPos = roomCenter - lightDir * 20.0f; // 拉远光源位置以容纳更高物体投影
+        glm::mat4 lightView = glm::lookAt(lightPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        return lightProjection * lightView;
+    }
+ 
+    void renderShadowPass(const glm::mat4& lightSpaceMatrix, const glm::mat4& model, GLsizei vertexCount) {
+        if (!depthShader_ || vertexCount <= 0) return;
+        GLint prevViewport[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+        GLint prevFBO = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
+ 
+        glViewport(0, 0, shadowMapResolution_, shadowMapResolution_);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_);
+        glClear(GL_DEPTH_BUFFER_BIT);
+ 
+        glCullFace(GL_FRONT);
+        depthShader_->use();
+        depthShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+        depthShader_->setMat4("model", model);
+        glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+        glUseProgram(0);
+        glCullFace(GL_BACK);
+ 
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+    }
+
     void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT) {
         if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
         vertexData_.clear();
+        skyVertexData_.clear();
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
         glm::vec3 front;
@@ -280,21 +353,75 @@ private:
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
         glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
+        cameraPosition_ = cameraPos;
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
         if (vertexData_.empty()) return;
+        GLsizei mainVertexCount = static_cast<GLsizei>(vertexData_.size() / 9);
+        GLsizei skyVertexCount = static_cast<GLsizei>(skyVertexData_.size() / 9);
+        if (mainVertexCount == 0 && skyVertexCount == 0) return;
 
-        shader_->use();
-        shader_->setMat4("view", view_);
-        shader_->setMat4("projection", projection_);
-
+        glm::mat4 model = glm::mat4(1.0f);
         glBindVertexArray(vao_);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-        glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexData_.size() / 6));
+        if (mainVertexCount > 0) {
+            glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
+        }
+
+        glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix(roomCenter, currentRoomHalfExtent_);
+        if (mainVertexCount > 0) {
+            renderShadowPass(lightSpaceMatrix, model, mainVertexCount);
+        }
+
+        shader_->use();
+
+        lightingSystem_->setupCeilingLights(room.size, wallHeight_, tileWorldSize_);
+        const auto& pointLights = lightingSystem_->getPointLights();
+        shader_->setInt("numPointLights", static_cast<int>(pointLights.size()));
+        for (size_t i = 0; i < pointLights.size(); ++i) {
+            std::string idx = std::to_string(i);
+            shader_->setVec3("pointLightPositions[" + idx + "]", pointLights[i].position);
+            shader_->setVec3("pointLightColors[" + idx + "]", pointLights[i].color);
+            shader_->setFloat("pointLightIntensities[" + idx + "]", pointLights[i].intensity);
+            shader_->setFloat("pointLightRadii[" + idx + "]", pointLights[i].radius);
+        }
+
+        const auto& mainLight = lightingSystem_->getMainLight();
+        shader_->setVec3("lightDir", mainLight.direction);
+        shader_->setVec3("lightColor", mainLight.color);
+        shader_->setFloat("lightIntensity", mainLight.intensity);
+        shader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
+        shader_->setVec3("viewPos", cameraPos);
+
+        shader_->setFloat("metallic", 0.0f);
+        shader_->setFloat("roughness", 0.5f);
+        shader_->setFloat("ao", 1.0f);
+        shader_->setMat4("model", model);
+        shader_->setMat4("view", view_);
+        shader_->setMat4("projection", projection_);
+        shader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+        shader_->setInt("shadowMap", 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, depthMap_);
+
+        if (mainVertexCount > 0) {
+            glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, mainVertexCount);
+        }
+
+        if (skyVertexCount > 0) {
+            glBufferData(GL_ARRAY_BUFFER, skyVertexData_.size() * sizeof(float), skyVertexData_.data(), GL_DYNAMIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, skyVertexCount);
+        }
+
+        glBindTexture(GL_TEXTURE_2D, 0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
         glUseProgram(0);
+    }
+
+    glm::vec3 getCameraPosition() const {
+        return cameraPosition_;
     }
 
     float appendRoomGeometry(const Room& room, int roomId, const GameState& state, const GameState& next_state, float moveT, float tileSize) {
@@ -303,13 +430,23 @@ private:
 
         playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
+        auto pushQuadTo = [&](std::vector<float>& buffer, const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
+            // 计算四边形法线（使用叉积）
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 normal = glm::normalize(glm::cross(edge1, edge2));
+            
+            // 添加顶点（包含法线）
+            pushVertexWithNormalTo(buffer, v0, normal, color);
+            pushVertexWithNormalTo(buffer, v1, normal, color);
+            pushVertexWithNormalTo(buffer, v2, normal, color);
+            pushVertexWithNormalTo(buffer, v0, normal, color);
+            pushVertexWithNormalTo(buffer, v2, normal, color);
+            pushVertexWithNormalTo(buffer, v3, normal, color);
+        };
+
         auto pushQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
-            pushVertex(v0, color);
-            pushVertex(v1, color);
-            pushVertex(v2, color);
-            pushVertex(v0, color);
-            pushVertex(v2, color);
-            pushVertex(v3, color);
+            pushQuadTo(vertexData_, v0, v1, v2, v3, color);
         };
 
         auto appendFloor = [&](float minX, float maxX, float minZ, float maxZ, const glm::vec3& color) {
@@ -317,8 +454,17 @@ private:
             glm::vec3 v1(maxX, 0.0f, minZ);
             glm::vec3 v2(maxX, 0.0f, maxZ);
             glm::vec3 v3(minX, 0.0f, maxZ);
-            pushQuad(v0, v1, v2, v3, color);
+
+            pushQuad(v0, v3, v2, v1, color);
         };
+
+        auto appendSky = [&](float minX, float maxX, float minZ, float maxZ, const glm::vec3& color) {
+            glm::vec3 bottom0(minX, 5.0f, minZ);
+            glm::vec3 bottom1(maxX, 5.0f, minZ);
+            glm::vec3 bottom2(maxX, 5.0f, maxZ);
+            glm::vec3 bottom3(minX, 5.0f, maxZ);
+            pushQuadTo(skyVertexData_, bottom0, bottom1, bottom2, bottom3, color);
+ 		}; 
 
         auto appendColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
             glm::vec3 topColor = color;
@@ -327,16 +473,22 @@ private:
             glm::vec3 top1(maxX, maxY, minZ);
             glm::vec3 top2(maxX, maxY, maxZ);
             glm::vec3 top3(minX, maxY, maxZ);
-            pushQuad(top0, top1, top2, top3, topColor);
+            // 顶部面：原顺序导致法线朝下，改为逆时针(top0->top3->top2->top1)使其朝上
+            pushQuad(top0, top3, top2, top1, topColor);
 
             glm::vec3 bottom0(minX, minY, minZ);
             glm::vec3 bottom1(maxX, minY, minZ);
             glm::vec3 bottom2(maxX, minY, maxZ);
             glm::vec3 bottom3(minX, minY, maxZ);
-            pushQuad(bottom0, bottom1, top1, top0, sideColor);
-            pushQuad(bottom1, bottom2, top2, top1, sideColor);
-            pushQuad(bottom2, bottom3, top3, top2, sideColor);
-            pushQuad(bottom3, bottom0, top0, top3, sideColor);
+            
+            // 侧面1 (minZ)：原顺序法线朝内(+Z)，改为(bottom1->bottom0->top0->top1)使其朝外(-Z)
+            pushQuad(bottom1, bottom0, top0, top1, sideColor);
+            // 侧面2 (maxX)：原顺序法线朝内(-X)，改为(bottom2->bottom1->top1->top2)使其朝外(+X)
+            pushQuad(bottom2, bottom1, top1, top2, sideColor);
+            // 侧面3 (maxZ)：原顺序法线朝内(-Z)，改为(bottom3->bottom2->top2->top3)使其朝外(+Z)
+            pushQuad(bottom3, bottom2, top2, top3, sideColor);
+            // 侧面4 (minX)：原顺序法线朝内(+X)，改为(bottom0->bottom3->top3->top0)使其朝外(-X)
+            pushQuad(bottom0, bottom3, top3, top0, sideColor);
         };
 
         auto boundsForCell = [&](int gridX, int gridY) {
@@ -362,15 +514,35 @@ private:
             appendColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
         };
 
+        auto camera_in_wall = [&](float wallMinX, float wallMaxX, float wallMinZ, float wallMaxZ) {
+			float camZ = cameraPosition_.z, camX = cameraPosition_.x;
+			float camerayaw = cameraYaw_ >= 0 ? cameraYaw_ : cameraYaw_ + 360.0f;
+            if ( wallMinX <= camX && camX <= wallMaxX &&
+				wallMinZ <= camZ && camZ <= wallMaxZ) {
+                return true;
+            }
+            if (camerayaw <= 45.0f || camerayaw >= 315.0f) {
+                return ( wallMaxX <= camX ) || ( wallMinX - 1.0f <= camX );
+            } else if (camerayaw > 45.0f && camerayaw <= 135.0f) {
+                return ( wallMaxZ <= camZ ) || ( wallMinZ - 1.0f <= camZ );
+            } else if (camerayaw > 135.0f && camerayaw <= 225.0f) {
+                return (wallMinX >= camX) || (wallMaxX + 1.0f >= camX);
+            } else {
+                return (wallMinZ >= camZ) || (wallMaxZ + 1.0f >= camZ);
+			}
+		};
+
         // 地面/墙体
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
                 auto bounds = boundsForCell(x, y);
                 glm::vec3 baseColor = tileColorForCell(room.scene[y][x]);
                 appendFloor(bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
+			appendSky(bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
+                glm::vec3 camPos = cameraPosition_;
 
-                if (room.scene[y][x] == "#") {
-                    appendColumn(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(0.3f, 0.3f, 0.35f));
+                if (room.scene[y][x] == "#" && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
+                    appendColumn(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(0.55f, 0.62f, 0.78f));
                 }
             }
         }
@@ -447,19 +619,44 @@ private:
     }
 
     glm::vec3 tileColorForCell(const std::string& cell) const {
-        if (cell == "#") return {0.2f, 0.2f, 0.2f};
+        if (cell == "#") return {0.25f, 0.27f, 0.32f};
         if (cell == "=") return {0.25f, 0.6f, 0.3f};
         if (cell == "_") return {0.7f, 0.6f, 0.25f};
-        return {0.15f, 0.15f, 0.15f};
+        return {0.3f, 0.32f, 0.35f};
     }
 
     void pushVertex(const glm::vec3& pos, const glm::vec3& color) {
+        // 根据位置自动计算法线（简化版：基于顶点位置推断）
+        glm::vec3 normal = glm::normalize(pos - glm::vec3(0.0f, 0.0f, 0.0f));
+        if (glm::length(normal) < 0.01f) {
+            normal = glm::vec3(0.0f, 1.0f, 0.0f); // 默认向上
+        }
+        
         vertexData_.push_back(pos.x);
         vertexData_.push_back(pos.y);
         vertexData_.push_back(pos.z);
+        vertexData_.push_back(normal.x);
+        vertexData_.push_back(normal.y);
+        vertexData_.push_back(normal.z);
         vertexData_.push_back(color.r);
         vertexData_.push_back(color.g);
         vertexData_.push_back(color.b);
+    }
+    
+    void pushVertexWithNormal(const glm::vec3& pos, const glm::vec3& normal, const glm::vec3& color) {
+        pushVertexWithNormalTo(vertexData_, pos, normal, color);
+    }
+
+    void pushVertexWithNormalTo(std::vector<float>& buffer, const glm::vec3& pos, const glm::vec3& normal, const glm::vec3& color) {
+        buffer.push_back(pos.x);
+        buffer.push_back(pos.y);
+        buffer.push_back(pos.z);
+        buffer.push_back(normal.x);
+        buffer.push_back(normal.y);
+        buffer.push_back(normal.z);
+        buffer.push_back(color.r);
+        buffer.push_back(color.g);
+        buffer.push_back(color.b);
     }
 
     Input mapCameraRelativeInput(Input input) const {
@@ -508,14 +705,18 @@ private:
         case LEFT:
         default:
             return chooseCardinal(-right);
-        }
+    }
     }
 
     // GL 资源
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
     std::unique_ptr<Shader> shader_;
+    std::unique_ptr<Shader> depthShader_;
     GLuint fbo_ = 0;
+    GLuint depthMapFBO_ = 0;
+    GLuint depthMap_ = 0;
+    const unsigned int shadowMapResolution_ = 2048;
     std::vector<GLuint> roomTextures_;
     int textureWidth_ = 0;
     int textureHeight_ = 0;
@@ -526,16 +727,18 @@ private:
     int windowWidth_ = 0;
     int windowHeight_ = 0;
     std::vector<float> vertexData_;
+    std::vector<float> skyVertexData_;
 
     // 2.5D 离散相机
     float cameraYaw_ = 0.0f;                // 0 -> +X
     float cameraPitch_ = -45.0f;            // 固定俯仰
     const float fixedPitch_ = -45.0f;
     float currentRoomHalfExtent_ = 5.0f;
+    glm::vec3 cameraPosition_{ 0.0f, 3.0f, 0.0f };
     glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f};
     glm::vec2 cameraForward2D_{1.0f, 0.0f};
     const float tileWorldSize_ = 1.0f;
-    const float wallHeight_ = 1.0f;
+    const float wallHeight_ = 5.0f;
     const float eyeHeightOffset_ = 3.0f;
     const bool hidePlayerMesh_ = false;
 
@@ -550,6 +753,9 @@ private:
     bool moving_ = false;
     float moveDuration_ = 0.0f;
     float moveStartTime_ = 0.0f;
+    
+    // 光照系统
+    std::unique_ptr<LabLightingSystem> lightingSystem_;
 };
 
 } // namespace detail
