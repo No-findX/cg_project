@@ -27,6 +27,9 @@
     <ClCompile Include="glad.c">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="view\stb_image.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="model\include\gameplay.hpp">
@@ -53,6 +56,9 @@
     <ClInclude Include="view\shader.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="view\skybox_loader.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="view\shader\basic.frag">
@@ -69,6 +75,12 @@
     </None>
     <None Include="model\levels\l1.json">
       <Filter>资源文件</Filter>
+    </None>
+    <None Include="view\shader\skybox.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\skybox.vert">
+      <Filter>源文件</Filter>
     </None>
   </ItemGroup>
 </Project>
