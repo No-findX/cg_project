@@ -114,7 +114,7 @@ public:
 
     // 开始一次位移动画（用于玩家/箱子推进）
     void beginMoveAnimation(float duration) {
-        // 缩短时长以提升轻快感，若调用者提供更长时长，可按调用者值
+        // 缩短时长以提升轻快感，若调用者提供更短时长，可按调用者值
         const float preferred = 0.3f;
         moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
         moveStartTime_ = static_cast<float>(glfwGetTime());
@@ -215,8 +215,45 @@ public:
             // Toll portals in current room
             std::vector<Portal*> portalsToRender;
             for (const auto& portal : portalsList) {
-                if (portal->portalPos.room == state.player.room) {
+                if (portal->getPortalPos(state.boxrooms).room == state.player.room) {
                     portalsToRender.push_back(portal);
+                }
+            }
+
+            // Move all portals to appropriate positions: moving boxrooms
+            for (const auto& portal : portalsToRender) {
+                // If this is a stationary portal, skip moving
+                if (portal->stationary) {
+                    continue;
+                }
+
+                // 1. Get boxroom ID, start pos & end pos
+                int boxroomID = portal->boxroomID;
+                auto start = state.boxrooms.find(boxroomID);
+                auto end = next_state.boxrooms.find(boxroomID);
+                if (start == state.boxrooms.end() || end == next_state.boxrooms.end()) {
+                    continue;
+                }
+                const Pos& startPos = start->second;
+                const Pos& endPos = end->second;
+
+                // 2. Get world coordinate of the portal at start & end
+                glm::vec3 startWorldPos = computePortalPosition(level.rooms[startPos.room], startPos.x, startPos.y, portal->relativePos, tileWorldSize_, 0.96f);
+                glm::vec3 endWorldPos = computePortalPosition(level.rooms[endPos.room], endPos.x, endPos.y, portal->relativePos, tileWorldSize_, 0.96f);
+
+                // 3. Calculate current pos (interpolation with moveT) and update portal position
+                if (startPos.room == state.player.room && 
+                    endPos.room == state.player.room &&
+                    (startPos.x != endPos.x || startPos.y != endPos.y) &&
+                    moving_) 
+                {
+                    portal->setPosition(startWorldPos + (endWorldPos - startWorldPos) * moveT);
+                }
+                else if (startPos.room == state.player.room && (!moving_ || (startPos.room != endPos.room || (startPos.x == endPos.x && startPos.y == endPos.y)))) {
+                    portal->setPosition(startWorldPos);
+                }
+                else if (!moving_ && endPos.room == state.player.room) {
+                    portal->setPosition(endWorldPos);
                 }
             }
 
@@ -274,7 +311,7 @@ public:
         }
     }
 
-    void registerPortals(std::array<int, 2> entry, int boxroomID, Pos boxroomPos, const Room& outerRoom, const Room& boxroom, int scrWidth, int scrHeight) {
+    void registerPortals(std::array<int, 2> entry, int boxroomID, Pos boxroomPos, const Room& outerRoom, const Room& boxroom) {
         int y = entry[0];
         int x = entry[1];
         
@@ -312,12 +349,16 @@ public:
         glm::vec3 innerWorldPos = computePortalPosition(boxroom, innerPortalPos.x, innerPortalPos.y, relativePos, tileWorldSize_, 0.96f);
         glm::vec3 outerWorldPos = computePortalPosition(outerRoom, outerPortalPos.x, outerPortalPos.y, relativePos, tileWorldSize_, 0.96f);
 
-        Portal* portalOutside = new Portal(outerPortalPos, boxroomID, scrHeight, scrWidth, outerWorldPos, outerNormal, 0.96f, tileWorldSize_ * 0.96f);
-        Portal* portalInBox = new Portal(innerPortalPos, boxroomID, scrHeight, scrWidth, innerWorldPos, innerNormal, 0.96f, tileWorldSize_ * 0.96f);
+        Portal* portalOutside = new Portal(outerPortalPos, relativePos, boxroomID, windowHeight_, windowWidth_, outerWorldPos, outerNormal, 0.96f, tileWorldSize_ * 0.96f);
+        Portal* portalInBox = new Portal(innerPortalPos, relativePos, boxroomID, windowHeight_, windowWidth_, innerWorldPos, innerNormal, 0.96f, tileWorldSize_ * 0.96f);
         portalOutside->setPairPortal(portalInBox);
         portalInBox->setPairPortal(portalOutside);
         portalOutside->setVAOs();
         portalInBox->setVAOs();
+
+        // New: need to distinguish between movable / stationary portals!
+        // portalInBox is always stationary.
+        portalInBox->stationary = true;
 
         portalsList.push_back(portalOutside);
         portalsList.push_back(portalInBox);
@@ -326,6 +367,21 @@ public:
     void clearPortals(void) {
         for (const auto portal : portalsList) {
             delete portal;
+        }
+    }
+
+    // Handle resize: update stored scr params of portals and update projection matrix
+    void handleResize(int width, int height) {
+        // 1. Change member var.s
+        windowWidth_ = width;
+        windowHeight_ = height;
+
+        // 2. Update projection
+        updateProjection();
+
+        // 3. Update portals
+        for (const auto& portal : portalsList) {
+            portal->resizeFrameBuffer(width, height);
         }
     }
 
@@ -863,7 +919,7 @@ private:
             glEnable(GL_CLIP_DISTANCE0);
 
             // Render the scene without portals
-            renderRoomIndex(pairPortal->portalPos.room, state, level, next_state, moveT,
+            renderRoomIndex(pairPortal->getPortalPos(state.boxrooms).room, state, level, next_state, moveT,
                 true, currentPortal->getPairPortalClippingPlane(),
                 true, virtualView);
 
@@ -881,11 +937,11 @@ private:
         // First toll portals in the room of pairPortal, then calc depth, finally recursively render.
         // Keep in mind that pairPortal is never rendered in this recursion!
         std::vector<Portal*> portalsToRender;
-        int pairRoomID = pairPortal->portalPos.room;
+        int pairRoomID = pairPortal->getPortalPos(state.boxrooms).room;
         bool renderCurrent = false;
         
         for (const auto& portal : portalsList) {
-            if (portal->portalPos.room == pairRoomID && portal != pairPortal) {
+            if (portal->getPortalPos(state.boxrooms).room == pairRoomID && portal != pairPortal) {
                 portalsToRender.push_back(portal);
                 if (currentPortal == portal) {
                     renderCurrent = true;
@@ -925,7 +981,7 @@ private:
 
         // 5. Render the Scene
         // Draw other scene obj.s and all portals in the room
-        renderRoomIndexWithPortals(pairPortal->portalPos.room, portalsToRender, currentPortal, state, level, next_state, moveT,
+        renderRoomIndexWithPortals(pairRoomID, portalsToRender, currentPortal, state, level, next_state, moveT,
             true, currentPortal->getPairPortalClippingPlane(),
             true, virtualView);
 
@@ -1081,11 +1137,11 @@ public:
     // New: register portals from level
     /// @brief Register portals from loaded level & initial state
     /// @details Create portals using input level, initial state and other info, call once after loading a new level
-    void registerPortals(const GameState& initialState, const Level* level, int scrWidth, int scrHeight) {
+    void registerPortals(const GameState& initialState, const Level* level) {
         for (const auto& [rid, boxroomPos] : initialState.boxrooms) {
             Room boxroom = level->rooms[rid];
             for (const auto& entry : boxroom.entries) {
-                renderer_.registerPortals(entry, rid, boxroomPos, level->rooms[boxroomPos.room], boxroom, scrWidth, scrHeight);
+                renderer_.registerPortals(entry, rid, boxroomPos, level->rooms[boxroomPos.room], boxroom);
             }
         }
     }
@@ -1121,6 +1177,11 @@ public:
 
         if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true, 0.5);
         else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
+    }
+
+    // Call from GLFW fb resize callback
+    void handleResize(int width, int height) {
+        renderer_.handleResize(width, height);
     }
 
     // 新增：由应用层启动位移动画

@@ -30,8 +30,12 @@ private:
     void onMouseMove(double xpos, double ypos);
     void onMouseButton(int button, int action, double xpos, double ypos);
 
+    // Window resize processing
+    void onResize(int width, int height);
+
     static void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
     static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+    static void WindowResizeCallback(GLFWwindow* window, int width, int height);
 
 private:
     GLFWwindow* window_ = nullptr;    // GLFW window/context handle.
@@ -91,9 +95,7 @@ bool GameApplication::init() {
         std::cerr << "Failed to load default level. Game will run without logic." << std::endl;
     }
 
-    int scrWidth, scrHeight;
-    glfwGetFramebufferSize(window_, &scrWidth, &scrHeight);
-    view_.registerPortals(viewModel_.getState(), viewModel_.getLevel(), scrWidth, scrHeight);
+    view_.registerPortals(viewModel_.getState(), viewModel_.getLevel());
 
     lastFrameTime_ = glfwGetTime();
     return true;
@@ -127,6 +129,7 @@ bool GameApplication::initWindow() {
     glfwSetWindowUserPointer(window_, this);
     glfwSetCursorPosCallback(window_, CursorPosCallback);
     glfwSetMouseButtonCallback(window_, MouseButtonCallback);
+    glfwSetFramebufferSizeCallback(window_, WindowResizeCallback);
     glfwSwapInterval(1);
 
     glViewport(0, 0, windowWidth_, windowHeight_);
@@ -363,6 +366,18 @@ void GameApplication::onMouseButton(int button, int action, double xpos, double 
     view_.handleMouseButton(button, action, static_cast<float>(xpos), static_cast<float>(ypos));
 }
 
+void GameApplication::onResize(int width, int height) {
+    // Update viewport
+    glViewport(0, 0, width, height);
+
+    // Change stored window width & height
+    windowWidth_ = width;
+    windowHeight_ = height;
+
+    // Call on view to update
+    view_.handleResize(width, height);
+}
+
 void GameApplication::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
     if (auto* app = static_cast<GameApplication*>(glfwGetWindowUserPointer(window))) {
         app->onMouseMove(xpos, ypos);
@@ -376,6 +391,21 @@ void GameApplication::MouseButtonCallback(GLFWwindow* window, int button, int ac
     glfwGetCursorPos(window, &xpos, &ypos);
     if (auto* app = static_cast<GameApplication*>(glfwGetWindowUserPointer(window))) {
         app->onMouseButton(button, action, xpos, ypos);
+    }
+}
+
+void GameApplication::WindowResizeCallback(GLFWwindow* window, int width, int height) {
+    (void)width;
+    (void)height;
+
+    int fbw = 0, fbh = 0;
+    glfwGetFramebufferSize(window, &fbw, &fbh); // use framebuffer size
+    
+    if (fbw <= 0 || fbh <= 0) {
+        return;
+    }
+    if (auto* app = static_cast<GameApplication*>(glfwGetWindowUserPointer(window))) {
+        app->onResize(fbw, fbh);
     }
 }
 

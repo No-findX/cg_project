@@ -43,13 +43,17 @@ public:
 	GLsizei wrapperVertexNum;
 
 	Portal* pairPortal;
-	Pos portalPos;
+	PortalPosition relativePos;
 	int boxroomID;
+	
+	// A note: portalPos *only* applies to stationary portals, dynamic portals use getPortalPos to calculate!
+	bool stationary = false;
+	Pos portalPos;
 
 	float height;
 	float width;
 
-	Portal(Pos portalPos, int boxroomID, int scrHeight, int scrWidth, glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3 normal = glm::vec3(0.0f, 0.0f, 1.0f), float height = 2, float width = 1) {
+	Portal(Pos portalPos, PortalPosition relativePos, int boxroomID, int scrHeight, int scrWidth, glm::vec3 position = glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3 normal = glm::vec3(0.0f, 0.0f, 1.0f), float height = 2, float width = 1) {
 		this->position = position;
 		this->normal = glm::normalize(normal);
 
@@ -59,6 +63,7 @@ public:
 		this->height = height;
 		this->width = width;
 		this->portalPos = portalPos;
+		this->relativePos = relativePos;
 		this->boxroomID = boxroomID;
 
 		this->scrWidth = scrWidth;
@@ -103,14 +108,23 @@ public:
 		}
 	}
 
-	void setSize(float width, float height) {
-		this->width = width;
-		this->height = height;
+	Pos getPortalPos(std::map<int, Pos> boxrooms) {
+		if (stationary) {
+			return portalPos;
+		}
+		
+		auto boxroom = boxrooms.find(boxroomID);
+		const Pos& pos = boxroom->second;
+		return pos;
 	}
 
 	void setPairPortal(Portal* pair) {
 		this->pairPortal = pair;
 		pair->pairPortal = this;
+	}
+
+	void setPosition(glm::vec3 newPos) {
+		this->position = newPos;
 	}
 
 	void createFBO(int scrHeight, int scrWidth) {
@@ -187,8 +201,47 @@ public:
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
 
-	void resizeTexture(int scrWidth, int scrHeight) {
+	// New: Resize fb when window is resized
+	void resizeFrameBuffer(int newWidth, int newHeight) {
+		// 1. Safeguard: width / height = 0 when window minimized
+		if (newWidth <= 0 || newHeight <= 0) return;
 
+		// 2. Update member var.s
+		this->scrWidth = newWidth;
+		this->scrHeight = newHeight;
+
+		// 3. Adjust texture size
+		// Calling glTexImage2D redistributes GPU memory, but keeps the texture ID.
+		glBindTexture(GL_TEXTURE_2D, texture);
+		glTexImage2D(
+			GL_TEXTURE_2D, 0, GL_RGB,
+			newWidth, newHeight,
+			0, GL_RGB, GL_UNSIGNED_BYTE, NULL
+		);
+
+		// 4. Adjust temp texture size
+		glBindTexture(GL_TEXTURE_2D, tempTexture);
+		glTexImage2D(
+			GL_TEXTURE_2D, 0, GL_RGB,
+			newWidth, newHeight,
+			0, GL_RGB, GL_UNSIGNED_BYTE, NULL
+		);
+
+		// Unbind texture
+		glBindTexture(GL_TEXTURE_2D, 0);
+
+		// 5. Adjust RBO size
+		glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+		glRenderbufferStorage(
+			GL_RENDERBUFFER,
+			GL_DEPTH24_STENCIL8,
+			newWidth,
+			newHeight
+		);
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+		// 注意：只要 Texture ID 和 RBO ID 没有变，就不需要重新调用 glFramebufferTexture2D 或 glFramebufferRenderbuffer
+		// FBO 会自动链接到新的内存大小。
 	}
 
 	glm::mat4 getModelMatrix() {
