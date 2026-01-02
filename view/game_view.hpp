@@ -27,6 +27,14 @@
 
 namespace detail {
 
+struct ObjThroughPortal {
+    bool exists = false;
+    bool renderTwice = false;
+    bool isPlayer = false;
+    Portal* portal = nullptr;
+    std::vector<float> vertexData;
+};
+
 class GameRenderer {
 public:
     void init(int windowWidth, int windowHeight) {
@@ -113,12 +121,14 @@ public:
     }
 
     // 开始一次位移动画（用于玩家/箱子推进）
-    void beginMoveAnimation(float duration) {
+    void beginMoveAnimation(float duration, Input input) {
         // 缩短时长以提升轻快感，若调用者提供更短时长，可按调用者值
         const float preferred = 0.3f;
-        moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
+        //moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
+        moveDuration_ = duration > 0.0f ? duration : preferred;
         moveStartTime_ = static_cast<float>(glfwGetTime());
         moving_ = true;
+        moveInput_ = input;
     }
         
     Input remapInputForCamera(Input input) const {
@@ -212,6 +222,11 @@ public:
 
         // New: render portals
         if (state.player.room >= 0 && state.player.room < static_cast<int>(level.rooms.size())) {
+            //// Enable clipping plane (both)
+            //// Whether to clip or not is controlled by flags, so can keep these options turned on
+            //glEnable(GL_CLIP_DISTANCE0);
+            //glEnable(GL_CLIP_DISTANCE1);
+            
             // Toll portals in current room
             std::vector<Portal*> portalsToRender;
             for (const auto& portal : portalsList) {
@@ -269,6 +284,10 @@ public:
             glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             renderRoomIndexWithPortals(state.player.room, portalsToRender, nullptr, state, level, next_state, moveT);
+
+            //// Disable clipping plane (both)
+            //glDisable(GL_CLIP_DISTANCE0);
+            //glDisable(GL_CLIP_DISTANCE1);
         }
     }
 
@@ -448,6 +467,7 @@ private:
 
     // 新增：支持插值渲染，依据 state 与 next_state 以及 moveT
     // Now features model matrix (basicShader_), clip plane toggling and virtual view toggling
+    // New: more clipping planes for passing-through-portal rendering
     void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT,
                          bool enableClip = false, glm::vec4 clipPlane = glm::vec4(0.0f), bool enableVirtualView = false, glm::mat4 virtualView = glm::mat4(0.0f))
     {
@@ -455,8 +475,6 @@ private:
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
-        vertexData_.clear();
-        softVertexData_.clear();
         moveDirection_ = glm::vec2(0.0f); // 默认无方向（用于非移动或非本房间）
 
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
@@ -491,8 +509,10 @@ private:
             basicShader_->setMat4("model", glm::mat4(1.0f));
             basicShader_->setMat4("view", viewToUse);
             basicShader_->setMat4("projection", projection_);
-            basicShader_->setVec4("clipPlane", clipPlane);
-            basicShader_->setBool("enableClip", enableClip);
+            basicShader_->setVec4("clipPlane0", clipPlane);
+            basicShader_->setBool("enableClip0", enableClip);
+            basicShader_->setVec4("clipPlane1", glm::vec4(0.0));
+            basicShader_->setBool("enableClip1", false);
 
             glBindVertexArray(vao_);
             glBindBuffer(GL_ARRAY_BUFFER, vbo_);
@@ -503,14 +523,17 @@ private:
         }
 
         // 绘制角色（软体立方体 + 着色器形变）
-        if (!softVertexData_.empty() && softcubeShader_) {
+        // Only draw if player is not passing through portals
+        if (!softVertexData_.empty() && softcubeShader_ && !(objThroughPortalData.exists && objThroughPortalData.isPlayer)) {
             softcubeShader_->use();
             softcubeShader_->setMat4("view", viewToUse);
             softcubeShader_->setMat4("projection", projection_);
             softcubeShader_->setVec2("direction", moveDirection_);
             softcubeShader_->setFloat("moveT", moveT);
-            softcubeShader_->setVec4("clipPlane", clipPlane);
-            softcubeShader_->setBool("enableClip", enableClip);
+            softcubeShader_->setVec4("clipPlane0", clipPlane);
+            softcubeShader_->setBool("enableClip0", enableClip);
+            softcubeShader_->setVec4("clipPlane1", glm::vec4(0.0));
+            softcubeShader_->setBool("enableClip1", false);
 
             // 待机时间（周期 idleDuration_）
             float idleT = 0.0f;
@@ -528,6 +551,105 @@ private:
             glBindVertexArray(0);
         }
 
+        // New: Draw (potentially passing-through-portal) stuff
+        if (objThroughPortalData.exists && !objThroughPortalData.vertexData.empty()) {
+            // Enable clipping plane 1
+            glEnable(GL_CLIP_DISTANCE1);
+            
+            if (!objThroughPortalData.isPlayer) {
+                // Box
+                basicShader_->use();
+                basicShader_->setMat4("model", glm::mat4(1.0f));
+                basicShader_->setMat4("view", viewToUse);
+                basicShader_->setMat4("projection", projection_);
+                basicShader_->setVec4("clipPlane0", clipPlane);
+                basicShader_->setBool("enableClip0", enableClip);
+                basicShader_->setVec4("clipPlane1", objThroughPortalData.portal->getPortalClippingPlane());
+                basicShader_->setBool("enableClip1", true);
+
+                if (!objThroughPortalData.renderTwice) {
+                    // Draw only once
+                    glBindVertexArray(vao_);
+                    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                    glBufferData(GL_ARRAY_BUFFER, objThroughPortalData.vertexData.size() * sizeof(float), objThroughPortalData.vertexData.data(), GL_DYNAMIC_DRAW);
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(objThroughPortalData.vertexData.size() / 6));
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    glBindVertexArray(0);
+                }
+                else {
+                    // Draw twice, remember to change the clipping plane!
+                    glBindVertexArray(vao_);
+                    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                    glBufferData(GL_ARRAY_BUFFER, objThroughPortalData.vertexData.size() * sizeof(float), objThroughPortalData.vertexData.data(), GL_DYNAMIC_DRAW);
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>((objThroughPortalData.vertexData.size() / 6) / 2));
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    glBindVertexArray(0);
+
+                    basicShader_->setVec4("clipPlane1", objThroughPortalData.portal->getPairPortalClippingPlane());
+
+                    glBindVertexArray(vao_);
+                    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                    glBufferData(GL_ARRAY_BUFFER, objThroughPortalData.vertexData.size() * sizeof(float), objThroughPortalData.vertexData.data(), GL_DYNAMIC_DRAW);
+                    glDrawArrays(GL_TRIANGLES, static_cast<GLsizei>((objThroughPortalData.vertexData.size() / 6) / 2), static_cast<GLsizei>((objThroughPortalData.vertexData.size() / 6) / 2));
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    glBindVertexArray(0);
+                }
+            }
+
+            else {
+                // Player
+                softcubeShader_->use();
+                softcubeShader_->setMat4("view", viewToUse);
+                softcubeShader_->setMat4("projection", projection_);
+                softcubeShader_->setVec2("direction", moveDirection_);
+                softcubeShader_->setFloat("moveT", moveT);
+                softcubeShader_->setVec4("clipPlane0", clipPlane);
+                softcubeShader_->setBool("enableClip0", enableClip);
+                softcubeShader_->setVec4("clipPlane1", objThroughPortalData.portal->getPortalClippingPlane());
+                softcubeShader_->setBool("enableClip1", true);
+
+                // 待机时间（周期 idleDuration_）
+                float idleT = 0.0f;
+                if (idleDuration_ > 1e-5f) {
+                    float now = static_cast<float>(glfwGetTime());
+                    idleT = std::fmod(now, idleDuration_) / idleDuration_;
+                }
+                softcubeShader_->setFloat("idleT", idleT);
+
+                if (!objThroughPortalData.renderTwice) {
+                    // Draw only once
+                    glBindVertexArray(vaoSoft_);
+                    glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
+                    glBufferData(GL_ARRAY_BUFFER, objThroughPortalData.vertexData.size() * sizeof(float), objThroughPortalData.vertexData.data(), GL_DYNAMIC_DRAW);
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(objThroughPortalData.vertexData.size() / 11));
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    glBindVertexArray(0);
+                }
+                else {
+                    // Draw twice, remember to change the clipping plane & move direction!
+                    glBindVertexArray(vaoSoft_);
+                    glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
+                    glBufferData(GL_ARRAY_BUFFER, objThroughPortalData.vertexData.size() * sizeof(float), objThroughPortalData.vertexData.data(), GL_DYNAMIC_DRAW);
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>((objThroughPortalData.vertexData.size() / 11) / 2));
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    glBindVertexArray(0);
+
+                    softcubeShader_->setVec2("direction", moveDirectionEnd_);
+                    softcubeShader_->setVec4("clipPlane1", objThroughPortalData.portal->getPairPortalClippingPlane());
+
+                    glBindVertexArray(vaoSoft_);
+                    glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
+                    glBufferData(GL_ARRAY_BUFFER, objThroughPortalData.vertexData.size() * sizeof(float), objThroughPortalData.vertexData.data(), GL_DYNAMIC_DRAW);
+                    glDrawArrays(GL_TRIANGLES, static_cast<GLsizei>((objThroughPortalData.vertexData.size() / 11) / 2), static_cast<GLsizei>((objThroughPortalData.vertexData.size() / 11) / 2));
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    glBindVertexArray(0);
+                }
+            }
+
+            // Disable clipping plane 1
+            glDisable(GL_CLIP_DISTANCE1);
+        }
+
         glUseProgram(0);
     }
 
@@ -537,53 +659,68 @@ private:
 
         playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
-        auto pushVertex = [&](const glm::vec3& pos, const glm::vec3& color) {
-            vertexData_.push_back(pos.x);
-            vertexData_.push_back(pos.y);
-            vertexData_.push_back(pos.z);
-            vertexData_.push_back(color.r);
-            vertexData_.push_back(color.g);
-            vertexData_.push_back(color.b);
+        // Initialize passing through portal info
+        objThroughPortalData.exists = false;
+        objThroughPortalData.isPlayer = false;
+        objThroughPortalData.renderTwice = false;
+        objThroughPortalData.portal = nullptr;
+        
+        // Clear vertex vectors
+        vertexData_.clear();
+        softVertexData_.clear();
+        objThroughPortalData.vertexData.clear();
+
+        auto pushVertex = [&](const glm::vec3& pos, const glm::vec3& color, bool throughPortal = false) {
+            std::vector<float>& target = throughPortal ? objThroughPortalData.vertexData : vertexData_;
+            
+            target.push_back(pos.x);
+            target.push_back(pos.y);
+            target.push_back(pos.z);
+            target.push_back(color.r);
+            target.push_back(color.g);
+            target.push_back(color.b);
         };
 
-        auto pushQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
-            pushVertex(v0, color);
-            pushVertex(v1, color);
-            pushVertex(v2, color);
-            pushVertex(v0, color);
-            pushVertex(v2, color);
-            pushVertex(v3, color);
+        auto pushQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color, bool throughPortal = false) {
+            pushVertex(v0, color, throughPortal);
+            pushVertex(v1, color, throughPortal);
+            pushVertex(v2, color, throughPortal);
+            pushVertex(v0, color, throughPortal);
+            pushVertex(v2, color, throughPortal);
+            pushVertex(v3, color, throughPortal);
         };
 
         // 软体立方体：扩展布局 push
-        auto pushSoftVertex = [&](const glm::vec3& pos, const glm::vec3& color, const glm::vec2& n2, const glm::vec3& tex) {
-            softVertexData_.push_back(pos.x);
-            softVertexData_.push_back(pos.y);
-            softVertexData_.push_back(pos.z);
-            softVertexData_.push_back(color.r);
-            softVertexData_.push_back(color.g);
-            softVertexData_.push_back(color.b);
-            softVertexData_.push_back(n2.x);
-            softVertexData_.push_back(n2.y);
-            softVertexData_.push_back(tex.x);
-            softVertexData_.push_back(tex.y);
-            softVertexData_.push_back(tex.z);
+        auto pushSoftVertex = [&](const glm::vec3& pos, const glm::vec3& color, const glm::vec2& n2, const glm::vec3& tex, bool throughPortal = false) {
+            std::vector<float>& target = throughPortal ? objThroughPortalData.vertexData : softVertexData_;
+            
+            target.push_back(pos.x);
+            target.push_back(pos.y);
+            target.push_back(pos.z);
+            target.push_back(color.r);
+            target.push_back(color.g);
+            target.push_back(color.b);
+            target.push_back(n2.x);
+            target.push_back(n2.y);
+            target.push_back(tex.x);
+            target.push_back(tex.y);
+            target.push_back(tex.z);
         };
 
         auto pushSoftQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3,
-                                const glm::vec3& color, const glm::vec2& n2, float cx, float cz, float halfW) {
+                                const glm::vec3& color, const glm::vec2& n2, float cx, float cz, float halfW, bool throughPortal = false) {
             // aTex.xy = 相对中心归一化偏移，aTex.z = halfW
             auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                 float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                 float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
                 return glm::vec3(xNorm, zNorm, halfW);
             };
-            pushSoftVertex(v0, color, n2, makeTex(v0));
-            pushSoftVertex(v1, color, n2, makeTex(v1));
-            pushSoftVertex(v2, color, n2, makeTex(v2));
-            pushSoftVertex(v0, color, n2, makeTex(v0));
-            pushSoftVertex(v2, color, n2, makeTex(v2));
-            pushSoftVertex(v3, color, n2, makeTex(v3));
+            pushSoftVertex(v0, color, n2, makeTex(v0), throughPortal);
+            pushSoftVertex(v1, color, n2, makeTex(v1), throughPortal);
+            pushSoftVertex(v2, color, n2, makeTex(v2), throughPortal);
+            pushSoftVertex(v0, color, n2, makeTex(v0), throughPortal);
+            pushSoftVertex(v2, color, n2, makeTex(v2), throughPortal);
+            pushSoftVertex(v3, color, n2, makeTex(v3), throughPortal);
         };
 
         auto appendFloor = [&](float minX, float maxX, float minZ, float maxZ, const glm::vec3& color) {
@@ -594,28 +731,28 @@ private:
             pushQuad(v0, v1, v2, v3, color);
         };
 
-        auto appendColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+        auto appendColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color, bool throughPortal = false) {
             glm::vec3 topColor = color;
             glm::vec3 sideColor = color * 0.85f;
             glm::vec3 top0(minX, maxY, minZ);
             glm::vec3 top1(maxX, maxY, minZ);
             glm::vec3 top2(maxX, maxY, maxZ);
             glm::vec3 top3(minX, maxY, maxZ);
-            pushQuad(top0, top1, top2, top3, topColor);
+            pushQuad(top0, top1, top2, top3, topColor, throughPortal);
 
             glm::vec3 bottom0(minX, minY, minZ);
             glm::vec3 bottom1(maxX, minY, minZ);
             glm::vec3 bottom2(maxX, minY, maxZ);
             glm::vec3 bottom3(minX, minY, maxZ);
-            pushQuad(bottom0, bottom1, top1, top0, sideColor);
-            pushQuad(bottom1, bottom2, top2, top1, sideColor);
-            pushQuad(bottom2, bottom3, top3, top2, sideColor);
-            pushQuad(bottom3, bottom0, top0, top3, sideColor);
+            pushQuad(bottom0, bottom1, top1, top0, sideColor, throughPortal);
+            pushQuad(bottom1, bottom2, top2, top1, sideColor, throughPortal);
+            pushQuad(bottom2, bottom3, top3, top2, sideColor, throughPortal);
+            pushQuad(bottom3, bottom0, top0, top3, sideColor, throughPortal);
         };
 
         // CPU 端软体立方体：不做待机形变，只输出细分网格与 aNormal/aTex
         auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
-            const glm::vec3& color, float /*amp*/, float /*timeT*/) {
+            const glm::vec3& color, float /*amp*/, float /*timeT*/, bool throughPortal = false) {
             const int RES = 16;
 
             const float cx = 0.5f * (minX + maxX);
@@ -668,7 +805,7 @@ private:
                             return glm::vec3(xNorm, zNorm, halfW);
                         };
 
-                        pushSoftQuad(p00, p10, p11, p01, faceColor, n2, cx, cz, halfW);
+                        pushSoftQuad(p00, p10, p11, p01, faceColor, n2, cx, cz, halfW, throughPortal);
                     }
                 }
             };
@@ -697,24 +834,24 @@ private:
             return glm::vec2((b[0] + b[1]) * 0.5f, (b[2] + b[3]) * 0.5f); // x, z
         };
 
-        auto drawAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height) {
+        auto drawAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, bool throughPortal = false) {
             const float inset = tileSize * 0.02f;
             const float halfW = (tileSize * 0.5f) - inset;
             float minX = centerXZ.x - halfW;
             float maxX = centerXZ.x + halfW;
             float minZ = centerXZ.y - halfW;
             float maxZ = centerXZ.y + halfW;
-            appendColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
+            appendColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, throughPortal);
         };
 
-        auto drawPlayerAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, float idleT) {
+        auto drawPlayerAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, float idleT, bool throughPortal = false) {
             const float inset = tileSize * 0.10f;
             const float halfW = (tileSize * 0.5f) - inset;
             float minX = centerXZ.x - halfW;
             float maxX = centerXZ.x + halfW;
             float minZ = centerXZ.y - halfW;
             float maxZ = centerXZ.y + halfW;
-            appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05f, idleT);
+            appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05f, idleT, throughPortal);
         };
 
         // 地面/墙体
@@ -730,6 +867,66 @@ private:
             }
         }
 
+        // Determine whether the obj. is going through a portal
+        auto isPassingThroughPortal = [&](const Pos& s, const Pos& e) {
+            if (!moving_ || (s.room != roomId && e.room != roomId)) {
+                // Player not moving, or neither end is in cur. room
+                return false;
+            }
+            else if (s.room != e.room) {
+                // Ends not in the same room, certainly going through a portal
+                return true;
+            }
+            else {
+                // Ends in the same room, but might be going through a portal
+                // Determine by judging whether movement is continuous, or not moving at all
+                int dx = e.x - s.x;
+                int dy = e.y - s.y;
+                if ((moveInput_ == UP && dx == 0 && dy == -1) ||
+                    (moveInput_ == DOWN && dx == 0 && dy == 1) ||
+                    (moveInput_ == LEFT && dx == -1 && dy == 0) ||
+                    (moveInput_ == RIGHT && dx == 1 && dy == 0) ||
+                    (dx == 0 && dy == 0))
+                {
+                    return false;
+                }
+                else {
+                    return true;
+                }
+            }
+        };
+
+        auto getPassingThroughPortal = [&](const Pos& curPos) {
+            Portal* target = nullptr;
+
+            int dx = 0, dy = 0;
+            switch (moveInput_) {
+                case UP: dy = -1; break;
+                case DOWN: dy = 1; break;
+                case LEFT: dx = -1; break;
+                case RIGHT: dx = 1; break;
+            }
+
+            for (const auto& portal : portalsList) {
+                if (portal->getPortalPos(state.boxrooms) == curPos) {
+                    // Currently at entry, only 1 portal per entry
+                    target = portal;
+                    break;
+                }
+                else if (Pos(curPos.room, curPos.x + dx, curPos.y + dy) == portal->getPortalPos(state.boxrooms) &&
+                        ((moveInput_ == UP && portal->relativePos == ZNeg) ||
+                         (moveInput_ == DOWN && portal->relativePos == ZPos) ||
+                         (moveInput_ == LEFT && portal->relativePos == XPos) ||
+                         (moveInput_ == RIGHT && portal->relativePos == XNeg)))
+                {
+                    target = portal;
+                    break;
+                }
+            }
+
+            return target;
+        };
+
         // 计算玩家插值 + 设置运动方向
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
@@ -744,7 +941,59 @@ private:
                 idleT = std::fmod(now, idleDuration_) / idleDuration_;
             }
 
-            if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
+            if (isPassingThroughPortal(s, e)) {
+                // Store relevant info
+                objThroughPortalData.exists = true;
+                objThroughPortalData.isPlayer = true;
+                objThroughPortalData.portal = getPassingThroughPortal(s);
+
+                // Calculate "supposedly" position and draw the box
+                int dx = 0, dy = 0;
+                switch (moveInput_) {
+                    case UP: dy = -1; break;
+                    case DOWN: dy = 1; break;
+                    case LEFT: dx = -1; break;
+                    case RIGHT: dx = 1; break;
+                }
+
+                glm::vec2 csNow = centerForCell(s.x, s.y);
+                glm::vec2 csNext = centerForCell(s.x + dx, s.y + dy);
+                glm::vec2 cs = csNow + (csNext - csNow) * moveT;
+
+                glm::vec2 dir = csNext - csNow;
+                if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
+                else dir = glm::vec2(0.0f);
+                moveDirection_ = dir; // 供 softcubeShader_ 使用
+
+                drawPlayerAtCenter(cs, color, height, idleT, true);
+
+                // If the player is being teleported to the same room, draw twice
+                if (s.room == e.room) {
+                    objThroughPortalData.renderTwice = true;
+
+                    // Calculate "supposedly" position before exiting pairPortal and draw the box
+                    // The render function will handle drawing the two obj.s
+                    int dxe = 0, dye = 0;
+                    switch (objThroughPortalData.portal->pairPortal->relativePos) {
+                        case XPos: dxe = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
+                        case XNeg: dxe = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
+                        case ZPos: dye = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
+                        case ZNeg: dye = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
+                    }
+
+                    glm::vec2 ceNow = centerForCell(e.x + dxe, e.y + dye);
+                    glm::vec2 ceNext = centerForCell(e.x, e.y);
+                    glm::vec2 ce = ceNow + (ceNext - ceNow) * moveT;
+
+                    glm::vec2 dire = ceNext - ceNow;
+                    if (glm::dot(dire, dire) > 1e-6f) dire = glm::normalize(dire);
+                    else dire = glm::vec2(0.0f);
+                    moveDirectionEnd_ = dire; // 供 softcubeShader_ 使用
+
+                    drawPlayerAtCenter(ce, color, height, idleT, true);
+                }
+            }
+            else if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
                 glm::vec2 cs = centerForCell(s.x, s.y);
                 glm::vec2 ce = centerForCell(e.x, e.y);
                 glm::vec2 dir = ce - cs;
@@ -754,11 +1003,13 @@ private:
 
                 glm::vec2 c = cs + (ce - cs) * moveT;
                 drawPlayerAtCenter(c, color, height, idleT);
-            } else if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
+            } 
+            else if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
                 moveDirection_ = glm::vec2(0.0f);
                 glm::vec2 c = centerForCell(s.x, s.y);
                 drawPlayerAtCenter(c, color, height, idleT);
-            } else if (!moving_ && e.room == roomId) {
+            }
+            else if (!moving_ && e.room == roomId) {
                 moveDirection_ = glm::vec2(0.0f);
                 glm::vec2 c = centerForCell(e.x, e.y);
                 drawPlayerAtCenter(c, color, height, idleT);
@@ -776,24 +1027,61 @@ private:
                 if (it != next_boxes.end()) {
                     const Pos& e = it->second;
 
-                    if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
+                    if (isPassingThroughPortal(s, e)) {
+                        // Store relevant info
+                        objThroughPortalData.exists = true;
+                        objThroughPortalData.isPlayer = false;
+                        objThroughPortalData.portal = getPassingThroughPortal(s);
+                        
+                        // Calculate "supposedly" position and draw the box
+                        int dx = 0, dy = 0;
+                        switch (moveInput_) {
+                            case UP: dy = -1; break;
+                            case DOWN: dy = 1; break;
+                            case LEFT: dx = -1; break;
+                            case RIGHT: dx = 1; break;
+                        }
+
+                        glm::vec2 csNow = centerForCell(s.x, s.y);
+                        glm::vec2 csNext = centerForCell(s.x + dx, s.y + dy);
+                        glm::vec2 cs = csNow + (csNext - csNow) * moveT;
+
+                        drawAtCenter(cs, color, height, true);
+
+                        // If the box is being teleported to the same room, draw twice
+                        if (s.room == e.room) {
+                            objThroughPortalData.renderTwice = true;
+
+                            // Calculate "supposedly" position before exiting pairPortal and draw the box
+                            // The render function will handle drawing the two obj.s
+                            int dxe = 0, dye = 0;
+                            switch (objThroughPortalData.portal->pairPortal->relativePos) {
+                                case XPos: dxe = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
+                                case XNeg: dxe = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
+                                case ZPos: dye = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
+                                case ZNeg: dye = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
+                            }
+
+                            glm::vec2 ceNow = centerForCell(e.x + dxe, e.y + dye);
+                            glm::vec2 ceNext = centerForCell(e.x, e.y);
+                            glm::vec2 ce = ceNow + (ceNext - ceNow) * moveT;
+
+                            drawAtCenter(ce, color, height, true);
+                        }
+                    }
+                    else if (s.room == roomId && e.room == roomId && (s.x != e.x || s.y != e.y) && moving_) {
                         glm::vec2 cs = centerForCell(s.x, s.y);
                         glm::vec2 ce = centerForCell(e.x, e.y);
                         glm::vec2 c = cs + (ce - cs) * moveT;
                         drawAtCenter(c, color, height);
-                        continue;
                     }
-
-                    if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
+                    else if (s.room == roomId && (!moving_ || (s.room != e.room || (s.x == e.x && s.y == e.y)))) {
                         glm::vec2 c = centerForCell(s.x, s.y);
                         drawAtCenter(c, color, height);
-                        continue;
                     }
-
-                    if (!moving_ && e.room == roomId) {
+                    else if (!moving_ && e.room == roomId) {
                         glm::vec2 c = centerForCell(e.x, e.y);
                         drawAtCenter(c, color, height);
-                        continue;
                     }
                 } else {
                     // 目标状态中不存在该箱子（例如被传送/消失），保持当前显示（非动画）
@@ -1060,7 +1348,9 @@ private:
     int windowHeight_ = 0;
     std::vector<float> vertexData_;
     std::vector<float> softVertexData_;
+    ObjThroughPortal objThroughPortalData;
     glm::vec2 moveDirection_{0.0f, 0.0f};
+    glm::vec2 moveDirectionEnd_{ 0.0f, 0.0f };
 
     // 2.5D 离散相机
     float cameraYaw_ = 0.0f;                // 0 -> +X
@@ -1083,6 +1373,7 @@ private:
 
     // 位移动画状态（玩家/箱子）
     bool moving_ = false;
+    Input moveInput_ = UP;
     float moveDuration_ = 0.0f;
     float moveStartTime_ = 0.0f;
 
@@ -1182,12 +1473,13 @@ public:
     // Call from GLFW fb resize callback
     void handleResize(int width, int height) {
         renderer_.handleResize(width, height);
+        uiManager_.handleResize(width, height);
     }
 
     // 新增：由应用层启动位移动画
-    void beginMoveAnimation(float duration) {
+    void beginMoveAnimation(float duration, Input input) {
         if (!showGameScene_) return;
-        renderer_.beginMoveAnimation(duration);
+        renderer_.beginMoveAnimation(duration, input);
     }
 
     // 新增：查询相机是否处于旋转中（用于输入加锁）

@@ -7,8 +7,12 @@ uniform mat4 view;
 uniform mat4 projection;
 
 // For portals
-uniform vec4 clipPlane;
-uniform bool enableClip;
+uniform vec4 clipPlane0;
+uniform bool enableClip0;
+
+// For passing through portals
+uniform vec4 clipPlane1;
+uniform bool enableClip1;
 
 out vec3 vColor;
 
@@ -18,7 +22,6 @@ void main() {
     vColor = aColor;
     gl_Position = projection * view * worldPos4dim;
 
-    if (enableClip) {
-        gl_ClipDistance[0] = dot(worldPos4dim, clipPlane);
-    }
+    gl_ClipDistance[0] = enableClip0 ? dot(worldPos4dim, clipPlane0) : 1.0;
+    gl_ClipDistance[1] = enableClip1 ? dot(worldPos4dim, clipPlane1) : 1.0;
 }

@@ -29,6 +29,16 @@ public:
         setupOrthographicProjection(windowWidth, windowHeight);
     }
 
+    // Handle resize: update stored scr params of portals and update projection matrix
+    void handleResize(int width, int height) {
+        // 1. Change member var.s
+        windowWidth = width;
+        windowHeight = height;
+
+        // 2. Update projection
+        setupOrthographicProjection(width, height);
+    }
+
     // Create the main menu buttons and wire high-level actions.
     void setupUI() {
         buttonManager.addButton(100, 100, 200, 50, "Start Game", [this]() {

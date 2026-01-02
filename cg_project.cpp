@@ -180,7 +180,7 @@ void GameApplication::processInput() {
     auto isNearMoveEnd = [&]() -> bool {
         if (!animatingMove_) return false;
         double u = (now - moveAnimStart_) / moveAnimDuration_;
-        return u >= 0.5; // 末段判定阈值：50% 以后
+        return u >= 0.8; // 末段判定阈值：80% 以后（略微增大以避免经常性的误触发）
     };
 
     Input input = UP;
@@ -262,7 +262,7 @@ void GameApplication::processInput() {
         // 启动动画
         animatingMove_ = true;
         moveAnimStart_ = now;
-        view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_));
+        view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_), input);
 
         lastInputTime_ = now;
     } else {
@@ -336,7 +336,7 @@ void GameApplication::render() {
                     // 立即启动下一段动画
                     animatingMove_ = true;
                     moveAnimStart_ = now;
-                    view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_));
+                    view_.beginMoveAnimation(static_cast<float>(moveAnimDuration_), pendingInput_);
                     lastInputTime_ = now;
                 } else {
                     // 无缓存输入：刷新到最新状态
