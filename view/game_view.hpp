@@ -33,16 +33,17 @@ namespace detail {
 
 class GameRenderer {
 public:
+    // 初始化渲染器：设置窗口尺寸、加载 Shader、初始化光照系统、阴影资源、Skybox、VAO/VBO 等
     void init(int windowWidth, int windowHeight) {
         windowWidth_ = windowWidth;
         windowHeight_ = windowHeight;
         textureWidth_ = windowWidth_;
         textureHeight_ = windowHeight_;
 
-        // ʹ�÷�װ�� Shader ����ļ�����
+        // 使用封装的 Shader 类加载着色器
         shader_ = std::make_unique<Shader>("view/shader/pbr.vert", "view/shader/pbr.frag");
         
-        // ��ʼ������ϵͳ
+        // 初始化光照系统
         lightingSystem_ = std::make_unique<LabLightingSystem>();
         depthShader_ = std::make_unique<Shader>("view/shader/shadow_depth.vert", "view/shader/shadow_depth.frag");
         setupShadowResources();
@@ -50,7 +51,7 @@ public:
         softcubeShader_ = std::make_unique<Shader>("view/shader/softcube.vert", "view/shader/softcube.frag");
         skyboxShader_ = std::make_unique<Shader>("view/shader/skybox.vert", "view/shader/skybox.frag");
 
-        // ��ʼ�� SkyBox����������·����
+        // 初始化 SkyBox（加载立方体贴图）
         std::vector<std::string> faces = {
             "view/assest/skybox/px.png",
             "view/assest/skybox/nx.png",
@@ -60,27 +61,29 @@ public:
             "view/assest/skybox/nz.png"
         };
         skybox_ = std::make_unique<SkyBox>(faces);
-        // Լ�� skyboxShader_ �Ĳ�������Ϊ "skybox"���󶨵� GL_TEXTURE0��
+        // 绑定 skyboxShader_ 的纹理单元为 "skybox"（绑定到 GL_TEXTURE0）
         if (skyboxShader_) {
             skyboxShader_->use();
             skyboxShader_->setInt("skybox", 0);
             glUseProgram(0);
         }
 
-        // �������Σ�pos3 + color3 + tex2��
+        // 设置 VAO/VBO：pos3 + normal3 + color3 + tex2
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);
         glBindVertexArray(vao_);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_);
         glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
 
-        const GLsizei basicStride = static_cast<GLsizei>(8 * sizeof(float));
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, basicStride, (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, basicStride, (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, basicStride, (void*)(6 * sizeof(float)));
+        const GLsizei pbrStride = static_cast<GLsizei>(11 * sizeof(float));
+        glEnableVertexAttribArray(0); // Pos
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, pbrStride, (void*)0);
+        glEnableVertexAttribArray(1); // Normal
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, pbrStride, (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2); // Color
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, pbrStride, (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(3); // Tex
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, pbrStride, (void*)(9 * sizeof(float)));
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
@@ -89,14 +92,14 @@ public:
         wallTex_ = loadTexture2D("view/assest/texture/wall.png");
         boxTex_ = loadTexture2D("view/assest/texture/box.png");
 
-        // ���� basicShader_ �Ĳ�����
+        // 设置 basicShader_ 的纹理单元
         if (basicShader_) {
             basicShader_->use();
             basicShader_->setInt("Texture", 0);
             glUseProgram(0);
         }
 
-        // ���������壨pos3 + color3 + normal2 + tex3��
+        // 设置软体（SoftCube）的 VAO/VBO（pos3 + color3 + normal2 + tex3）
         glGenVertexArrays(1, &vaoSoft_);
         glGenBuffers(1, &vboSoft_);
         glBindVertexArray(vaoSoft_);
@@ -125,11 +128,11 @@ public:
     void rotateCamera(float /*deltaX*/, float /*deltaY*/) {
     }
 
-    // ��תʱ�ܾ��µ���ת���󣬱���Ƕ�Ư��
+    // 摄像机旋转 90 度（平滑过渡）
     void rotateCameraBy90(bool left, float rotationtime = 0.0) {
         const float step = left ? -90.0f : 90.0f;
 
-        // ��������ת��������µ���ת���루����������
+        // 如果正在旋转，则忽略新的旋转请求
         if (rotating_) {
             return;
         }
@@ -153,9 +156,9 @@ public:
         }
     }
 
-    // ��ʼһ��λ�ƶ������������/�����ƽ���
+    // 开始移动动画（用于平滑移动玩家/箱子）
     void beginMoveAnimation(float duration) {
-        // ����ʱ�����������У����������ṩ����ʱ�����ɰ�������ֵ
+        // 设置移动持续时间，如果未提供或无效，则使用默认值
         const float preferred = 0.3f;
         moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
         moveStartTime_ = static_cast<float>(glfwGetTime());
@@ -166,7 +169,7 @@ public:
         return mapCameraRelativeInput(input);
     }
 
-    // ��ѯ��ǰ�Ƿ��������ת�У�������������
+    // 查询当前是否正在进行摄像机旋转动画
     bool isRotating() const {
         return rotating_;
     }
@@ -175,13 +178,13 @@ public:
         if (!basicShader_) return;
         if (level.rooms.empty()) return;
 
-        // �����ת������ƽ����
+        // 更新摄像机旋转动画
         if (rotating_) {
             const float now = static_cast<float>(glfwGetTime());
             float elapsed = now - rotateStartTime_;
-            if (elapsed >= rotateDuration_ * 0.98f) { // ����2%�ݴ���ǰ���
+            if (elapsed >= rotateDuration_ * 0.98f) { // 接近结束时直接完成
                 cameraYaw_ = rotateTargetYaw_;
-                // �淶���� [-180, 180] ��Χ����ֹ�����ۻ�
+                // 规范化角度到 [-180, 180] 范围，防止数值溢出
                 while (cameraYaw_ > 180.0f) cameraYaw_ -= 360.0f;
                 while (cameraYaw_ < -180.0f) cameraYaw_ += 360.0f;
                 rotating_ = false;
@@ -189,13 +192,13 @@ public:
                 float u = elapsed / rotateDuration_;
                 if (u < 0.0f) u = 0.0f;
                 if (u > 1.0f) u = 1.0f;
-                float p = u * u * (3.0f - 2.0f * u);
+                float p = u * u * (3.0f - 2.0f * u); // 平滑插值
                 float delta = (rotateTargetYaw_ >= rotateStartYaw_) ? (90.0f) : (-90.0f);
                 cameraYaw_ = rotateStartYaw_ + delta * p;
             }
         }
 
-        // λ�ƶ���ʱ��������ȼ���-����-�ȼ��٣�
+        // 计算移动动画插值（加速-匀速-减速）
         float moveT = 1.0f;
         if (moving_) {
             const float now = static_cast<float>(glfwGetTime());
@@ -208,11 +211,11 @@ public:
                 if (u < 0.0f) u = 0.0f;
                 if (u > 1.0f) u = 1.0f;
 
-                // �ٶ����Σ�ǰ 20% ���٣��� 20% ���٣��м�����
+                // 速度曲线：前 20% 加速，后 20% 减速，中间匀速
                 const float acc = 0.2f;
                 const float dec = 0.2f;
                 const float constv = 1.0f - acc - dec; // 0.6
-                // ��һ������ٶȣ�ʹ��λ��Ϊ 1
+                // 归一化最大速度，使得总位移为 1
                 const float vmax = 1.0f / (constv + 0.5f * (acc + dec));
 
                 if (u <= acc) {
@@ -324,7 +327,7 @@ private:
         projection_ = glm::perspective(glm::radians(55.0f), aspect, 0.1f, 200.0f);
     }
 
-    // �������ع���
+    // 加载纹理工具函数
     GLuint loadTexture2D(const char* path) {
         int w = 0, h = 0, n = 0;
         stbi_set_flip_vertically_on_load(1);
@@ -398,7 +401,7 @@ private:
         float orthoRange = halfExtent + 4.0f;
         glm::mat4 lightProjection = glm::ortho(-orthoRange, orthoRange, -orthoRange, orthoRange, 0.1f, 50.0f);
         glm::vec3 lightDir = glm::normalize(lightingSystem_->getMainLight().direction);
-        glm::vec3 lightPos = roomCenter - lightDir * 20.0f; // ��Զ��Դλ�������ɸ�������ͶӰ
+        glm::vec3 lightPos = roomCenter - lightDir * 20.0f; // 从远处光源位置进行正交投影
         glm::mat4 lightView = glm::lookAt(lightPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
         return lightProjection * lightView;
     }
@@ -437,7 +440,7 @@ private:
         wallVertexData_.clear();
         boxVertexData_.clear();
         softVertexData_.clear();
-        moveDirection_ = glm::vec2(0.0f); // Ĭ���޷������ڷ��ƶ���Ǳ����䣩
+        moveDirection_ = glm::vec2(0.0f); // 默认无方向（静止状态）
 
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
@@ -464,67 +467,58 @@ private:
         cameraPosition_ = cameraPos;
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        if (vertexData_.empty()) return;
-        GLsizei mainVertexCount = static_cast<GLsizei>(vertexData_.size() / 9);
-        GLsizei skyVertexCount = static_cast<GLsizei>(skyVertexData_.size() / 9);
-        if (mainVertexCount == 0 && skyVertexCount == 0) return;
-
+        // 移除旧的 PBR/Shadow 渲染逻辑
+        /*
+        // ...existing code...
+        */
+        
         glm::mat4 model = glm::mat4(1.0f);
-        glBindVertexArray(vao_);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-        if (mainVertexCount > 0) {
-            glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
-        }
-
         glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix(roomCenter, currentRoomHalfExtent_);
-        if (mainVertexCount > 0) {
-            renderShadowPass(lightSpaceMatrix, model, mainVertexCount);
+
+        // 保存当前 FBO（可能是 roomTextures_ 的 FBO）
+        GLint prevFBO = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
+        GLint prevViewport[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+        // 1. Shadow Pass (阴影贴图生成)
+        glViewport(0, 0, shadowMapResolution_, shadowMapResolution_);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        
+        if (depthShader_) {
+            depthShader_->use();
+            depthShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            depthShader_->setMat4("model", model);
+            
+            glCullFace(GL_FRONT);
+            
+            auto drawShadowBatch = [&](const std::vector<float>& data) {
+                if (data.empty()) return;
+                glBindVertexArray(vao_);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 11));
+            };
+            
+            drawShadowBatch(floorVertexData_);
+            drawShadowBatch(wallVertexData_);
+            drawShadowBatch(boxVertexData_);
+            
+            glCullFace(GL_BACK);
         }
+        
+        // 恢复之前的 FBO 和 Viewport
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+        
+        // 清除深度缓冲以便进行主渲染（颜色缓冲已在外部清除）
+        glClear(GL_DEPTH_BUFFER_BIT);
 
-        shader_->use();
-
-        lightingSystem_->setupCeilingLights(room.size, wallHeight_, tileWorldSize_);
-        const auto& pointLights = lightingSystem_->getPointLights();
-        shader_->setInt("numPointLights", static_cast<int>(pointLights.size()));
-        for (size_t i = 0; i < pointLights.size(); ++i) {
-            std::string idx = std::to_string(i);
-            shader_->setVec3("pointLightPositions[" + idx + "]", pointLights[i].position);
-            shader_->setVec3("pointLightColors[" + idx + "]", pointLights[i].color);
-            shader_->setFloat("pointLightIntensities[" + idx + "]", pointLights[i].intensity);
-            shader_->setFloat("pointLightRadii[" + idx + "]", pointLights[i].radius);
-        }
-
-        const auto& mainLight = lightingSystem_->getMainLight();
-        shader_->setVec3("lightDir", mainLight.direction);
-        shader_->setVec3("lightColor", mainLight.color);
-        shader_->setFloat("lightIntensity", mainLight.intensity);
-        shader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
-        shader_->setVec3("viewPos", cameraPos);
-
-        shader_->setFloat("metallic", 0.0f);
-        shader_->setFloat("roughness", 0.5f);
-        shader_->setFloat("ao", 1.0f);
-        shader_->setMat4("model", model);
-        shader_->setMat4("view", view_);
-        shader_->setMat4("projection", projection_);
-        shader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
-        shader_->setInt("shadowMap", 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, depthMap_);
-
-        if (mainVertexCount > 0) {
-            glBufferData(GL_ARRAY_BUFFER, vertexData_.size() * sizeof(float), vertexData_.data(), GL_DYNAMIC_DRAW);
-            glDrawArrays(GL_TRIANGLES, 0, mainVertexCount);
-        }
-
-        if (skyVertexCount > 0) {
-            glBufferData(GL_ARRAY_BUFFER, skyVertexData_.size() * sizeof(float), skyVertexData_.data(), GL_DYNAMIC_DRAW);
-            glDrawArrays(GL_TRIANGLES, 0, skyVertexCount);
-        }
-        glm::vec3 cameraPos = roomCenter + offsetDir * glm::vec3(1.25f, 1.25f, 1.25f) * currentRoomHalfExtent_ + glm::vec3(0.0f, 4.0f, 0.0f);
+        // 2. Skybox Pass (天空盒渲染)
+        cameraPos = roomCenter + offsetDir * glm::vec3(1.25f, 1.25f, 1.25f) * currentRoomHalfExtent_ + glm::vec3(0.0f, 4.0f, 0.0f);
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        // ������պУ��Ȼ��ƣ�ʹ����ƽ�Ƶ��Ӿ���
         if (skybox_ && skyboxShader_) {
             glDepthFunc(GL_LEQUAL);
             skyboxShader_->use();
@@ -536,31 +530,64 @@ private:
             glDepthFunc(GL_LESS);
         }
 
-        // ���ƾ�̬���Σ�����/ǽ/���ӣ�- �����󶨲�ͬ����
-        basicShader_->use();
-        basicShader_->setMat4("view", view_);
-        basicShader_->setMat4("projection", projection_);
-        glBindVertexArray(vao_);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+        // 3. PBR Lighting Pass (场景物体渲染：地板、墙壁、箱子)
+        if (shader_) {
+            shader_->use();
+            
+            // Lighting Uniforms
+            lightingSystem_->setupCeilingLights(room.size, wallHeight_, tileWorldSize_);
+            const auto& pointLights = lightingSystem_->getPointLights();
+            shader_->setInt("numPointLights", static_cast<int>(pointLights.size()));
+            for (size_t i = 0; i < pointLights.size(); ++i) {
+                std::string idx = std::to_string(i);
+                shader_->setVec3("pointLightPositions[" + idx + "]", pointLights[i].position);
+                shader_->setVec3("pointLightColors[" + idx + "]", pointLights[i].color);
+                shader_->setFloat("pointLightIntensities[" + idx + "]", pointLights[i].intensity);
+                shader_->setFloat("pointLightRadii[" + idx + "]", pointLights[i].radius);
+            }
 
-        auto drawBatch = [&](const std::vector<float>& data, GLuint tex) {
-            if (data.empty()) return;
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 8));
-        };
+            const auto& mainLight = lightingSystem_->getMainLight();
+            shader_->setVec3("lightDir", mainLight.direction);
+            shader_->setVec3("lightColor", mainLight.color);
+            shader_->setFloat("lightIntensity", mainLight.intensity);
+            shader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
+            shader_->setVec3("viewPos", cameraPos);
 
-        drawBatch(floorVertexData_, tileTex_);
-        drawBatch(wallVertexData_, wallTex_);
-        drawBatch(boxVertexData_, boxTex_);
+            shader_->setFloat("metallic", 0.0f);
+            shader_->setFloat("roughness", 0.5f);
+            shader_->setFloat("ao", 1.0f);
+            shader_->setMat4("model", model);
+            shader_->setMat4("view", view_);
+            shader_->setMat4("projection", projection_);
+            shader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            
+            // Shadow Map
+            shader_->setInt("shadowMap", 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, depthMap_);
+            
+            // Texture settings
+            shader_->setInt("albedoMap", 0);
+            shader_->setInt("useTexture", 1);
 
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-        glUseProgram(0);
+            auto drawPBRBatch = [&](const std::vector<float>& data, GLuint tex) {
+                if (data.empty()) return;
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glBindVertexArray(vao_);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 11));
+            };
 
-        // ���ƽ�ɫ������������ + ��ɫ���α䣩
+            drawPBRBatch(floorVertexData_, tileTex_);
+            drawPBRBatch(wallVertexData_, wallTex_);
+            drawPBRBatch(boxVertexData_, boxTex_);
+            
+            glUseProgram(0);
+        }
+
+        // 4. SoftCube (Player) Pass (玩家软体渲染)
         if (!softVertexData_.empty() && softcubeShader_) {
             softcubeShader_->use();
             softcubeShader_->setMat4("view", view_);
@@ -568,13 +595,46 @@ private:
             softcubeShader_->setVec2("direction", moveDirection_);
             softcubeShader_->setFloat("moveT", moveT);
 
-            // ����ʱ�䣨���� idleDuration_��
+            // 待机动画时间 (idleDuration_)
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
                 idleT = std::fmod(now, idleDuration_) / idleDuration_;
             }
             softcubeShader_->setFloat("idleT", idleT);
+
+            // PBR Uniforms
+            softcubeShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            softcubeShader_->setMat4("model", glm::mat4(1.0f));
+
+            const auto& pointLights = lightingSystem_->getPointLights();
+            softcubeShader_->setInt("numPointLights", static_cast<int>(pointLights.size()));
+            for (size_t i = 0; i < pointLights.size(); ++i) {
+                std::string idx = std::to_string(i);
+                softcubeShader_->setVec3("pointLightPositions[" + idx + "]", pointLights[i].position);
+                softcubeShader_->setVec3("pointLightColors[" + idx + "]", pointLights[i].color);
+                softcubeShader_->setFloat("pointLightIntensities[" + idx + "]", pointLights[i].intensity);
+                softcubeShader_->setFloat("pointLightRadii[" + idx + "]", pointLights[i].radius);
+            }
+
+            const auto& mainLight = lightingSystem_->getMainLight();
+            softcubeShader_->setVec3("lightDir", mainLight.direction);
+            softcubeShader_->setVec3("lightColor", mainLight.color);
+            softcubeShader_->setFloat("lightIntensity", mainLight.intensity);
+            softcubeShader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
+            softcubeShader_->setVec3("viewPos", cameraPos);
+
+            softcubeShader_->setFloat("metallic", 0.0f);
+            softcubeShader_->setFloat("roughness", 0.5f);
+            softcubeShader_->setFloat("ao", 1.0f);
+            
+            // Shadow Map
+            softcubeShader_->setInt("shadowMap", 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, depthMap_);
+            
+            // Texture settings (disable for softcube)
+            softcubeShader_->setInt("useTexture", 0);
 
             glBindVertexArray(vaoSoft_);
             glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
@@ -595,13 +655,18 @@ private:
         const int tileCount = room.size;
         const float boardHalf = tileCount * tileSize * 0.5f;
 
+        std::vector<std::vector<bool>> windowMap(tileCount, std::vector<bool>(tileCount, false));
+
         playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
-        // �������ζ��� push��pos3 + color3 + tex2
-        auto pushVertex = [](std::vector<float>& buf, const glm::vec3& pos, const glm::vec3& color, const glm::vec2& tex) {
+        // 辅助函数：向缓冲区添加顶点数据 (pos3 + normal3 + color3 + tex2)
+        auto pushVertex = [](std::vector<float>& buf, const glm::vec3& pos, const glm::vec3& normal, const glm::vec3& color, const glm::vec2& tex) {
             buf.push_back(pos.x);
             buf.push_back(pos.y);
             buf.push_back(pos.z);
+            buf.push_back(normal.x);
+            buf.push_back(normal.y);
+            buf.push_back(normal.z);
             buf.push_back(color.r);
             buf.push_back(color.g);
             buf.push_back(color.b);
@@ -610,15 +675,19 @@ private:
         };
 
         auto pushQuad = [&](std::vector<float>& buf, const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
-            pushVertex(buf, v0, color, glm::vec2(0.0f, 0.0f));
-            pushVertex(buf, v1, color, glm::vec2(1.0f, 0.0f));
-            pushVertex(buf, v2, color, glm::vec2(1.0f, 1.0f));
-            pushVertex(buf, v0, color, glm::vec2(0.0f, 0.0f));
-            pushVertex(buf, v2, color, glm::vec2(1.0f, 1.0f));
-            pushVertex(buf, v3, color, glm::vec2(0.0f, 1.0f));
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 normal = glm::normalize(glm::cross(edge1, edge2));
+
+            pushVertex(buf, v0, normal, color, glm::vec2(0.0f, 0.0f));
+            pushVertex(buf, v1, normal, color, glm::vec2(1.0f, 0.0f));
+            pushVertex(buf, v2, normal, color, glm::vec2(1.0f, 1.0f));
+            pushVertex(buf, v0, normal, color, glm::vec2(0.0f, 0.0f));
+            pushVertex(buf, v2, normal, color, glm::vec2(1.0f, 1.0f));
+            pushVertex(buf, v3, normal, color, glm::vec2(0.0f, 1.0f));
         };
 
-        // ���������壺��չ���� push
+        // 辅助函数：向软体缓冲区添加顶点数据 (pos3 + color3 + normal2 + tex3)
         auto pushSoftVertex = [&](const glm::vec3& pos, const glm::vec3& color, const glm::vec2& n2, const glm::vec3& tex) {
             softVertexData_.push_back(pos.x);
             softVertexData_.push_back(pos.y);
@@ -635,7 +704,7 @@ private:
 
         auto pushSoftQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3,
                                 const glm::vec3& color, const glm::vec2& n2, float cx, float cz, float halfW) {
-            // aTex.xy = ������Ĺ�һ��ƫ�ƣ�aTex.z = halfW
+            // aTex.xy = 归一化偏移，aTex.z = halfW
             auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                 float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                 float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
@@ -657,24 +726,53 @@ private:
             pushQuad(floorVertexData_, v0, v3, v2, v1, color);
         };
 
-        auto appendWallColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+        auto appendWallPart = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
             glm::vec3 topColor = color;
             glm::vec3 sideColor = color * 0.85f;
             glm::vec3 top0(minX, maxY, minZ);
             glm::vec3 top1(maxX, maxY, minZ);
             glm::vec3 top2(maxX, maxY, maxZ);
             glm::vec3 top3(minX, maxY, maxZ);
-            // �����棺ԭ˳���·��߳��£���Ϊ��ʱ��(top0->top3->top2->top1)ʹ�䳯��
-            pushQuad(top0, top3, top2, top1, topColor);
+            // 顶部面：原顺序导致法线朝下，改为逆时针(top0->top3->top2->top1)使其朝上
+            pushQuad(wallVertexData_, top0, top3, top2, top1, topColor);
 
             glm::vec3 bottom0(minX, minY, minZ);
             glm::vec3 bottom1(maxX, minY, minZ);
             glm::vec3 bottom2(maxX, minY, maxZ);
             glm::vec3 bottom3(minX, minY, maxZ);
-            pushQuad(wallVertexData_, bottom1, bottom0, top0, top0=1, sideColor);
+            // 侧面1 (minZ)：原顺序法线朝内(+Z)，改为(bottom1->bottom0->top0->top1)使其朝外(-Z)
+            pushQuad(wallVertexData_, bottom1, bottom0, top0, top1, sideColor);
+            // 侧面2 (maxX)：原顺序法线朝内(-X)，改为(bottom2->bottom1->top1->top2)使其朝外(+X)
             pushQuad(wallVertexData_, bottom2, bottom1, top1, top2, sideColor);
             pushQuad(wallVertexData_, bottom3, bottom2, top2, top3, sideColor);
             pushQuad(wallVertexData_, bottom0, bottom3, top3, top0, sideColor);
+        };
+
+        auto appendWindowWall = [&](int gx, int gy, float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+            float h = maxY - minY;
+            float w = maxX - minX;
+            float d = maxZ - minZ;
+            
+            float winBottom = minY + h * 0.3f;
+            float winTop = minY + h * 0.7f;
+            float pillarRatio = 0.2f;
+            float pW = w * pillarRatio;
+            float pD = d * pillarRatio;
+
+            // Bottom
+            appendWallPart(minX, maxX, minZ, maxZ, minY, winBottom, color);
+            // Top
+            appendWallPart(minX, maxX, minZ, maxZ, winTop, maxY, color);
+            
+            // Pillars
+            if((gx == 0 || (gx > 0 && windowMap[gy][gx - 1] != true)) && (gy == 0 || (gy > 0 && windowMap[gy - 1][gx] != true)))
+                appendWallPart(minX, minX + pW, minZ, minZ + pD, winBottom, winTop, color);
+            if((gx == tileCount - 1 || (gx < tileCount - 1 && windowMap[gy][gx + 1] != true)) && (gy == 0 || (gy > 0 && windowMap[gy - 1][gx] != true)))
+                appendWallPart(maxX - pW, maxX, minZ, minZ + pD, winBottom, winTop, color);
+            if((gx == 0 || (gx > 0 && windowMap[gy][gx - 1] != true)) && (gy == tileCount - 1 || (gy < tileCount - 1 && windowMap[gy + 1][gx] != true)))
+                appendWallPart(minX, minX + pW, maxZ - pD, maxZ, winBottom, winTop, color);
+            if((gx == tileCount - 1 || (gx < tileCount - 1 && windowMap[gy][gx + 1] != true)) && (gy == tileCount - 1 || (gy < tileCount - 1 && windowMap[gy + 1][gx] != true)))
+                appendWallPart(maxX - pW, maxX, maxZ - pD, maxZ, winBottom, winTop, color);
         };
 
         auto appendBoxColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
@@ -696,7 +794,7 @@ private:
             pushQuad(boxVertexData_, bottom3, bottom0, top0, top3, sideColor);
         };
 
-        // CPU �����������壺���������α䣬ֻ���ϸ�������� aNormal/aTex
+        // CPU 生成软体网格：细分平面，只在细分顶点上设置 aNormal/aTex
         auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
             const glm::vec3& color, float /*amp*/, float /*timeT*/) {
             const int RES = 16;
@@ -727,24 +825,24 @@ private:
                         float vv1 = v0 + (v1 - v0) * b1;
 
                         glm::vec3 p00, p10, p11, p01;
-                        if (axis == 1) { // ��/�� (x,z)
+                        if (axis == 1) { // 顶/底 (x,z)
                             p00 = glm::vec3(uu0, fixed, vv0);
                             p10 = glm::vec3(uu1, fixed, vv0);
                             p11 = glm::vec3(uu1, fixed, vv1);
                             p01 = glm::vec3(uu0, fixed, vv1);
-                        } else if (axis == 0) { // ��X (y,z)
+                        } else if (axis == 0) { // 侧X (y,z)
                             p00 = glm::vec3(fixed, uu0, vv0);
                             p10 = glm::vec3(fixed, uu1, vv0);
                             p11 = glm::vec3(fixed, uu1, vv1);
                             p01 = glm::vec3(fixed, uu0, vv1);
-                        } else { // ��Z (x,y)
+                        } else { // 侧Z (x,y)
                             p00 = glm::vec3(uu0, vv0, fixed);
                             p10 = glm::vec3(uu1, vv0, fixed);
                             p11 = glm::vec3(uu1, vv1, fixed);
                             p01 = glm::vec3(uu0, vv1, fixed);
                         }
 
-                        // ������ CPU ���α�
+                        // 计算纹理坐标（用于软体变形）
                         auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                             float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                             float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
@@ -756,13 +854,13 @@ private:
                 }
             };
 
-            // ��/�ף�aNormal = (0,0)
+            // 顶/底：aNormal = (0,0)
             emitFaceGrid(1, maxY, minX, maxX, minZ, maxZ, topColor,   glm::vec2(0.0f, 0.0f));
             emitFaceGrid(1, minY, minX, maxX, minZ, maxZ, bottomColor,glm::vec2(0.0f, 0.0f));
-            // ��X��aNormal = (��1,0)
+            // 侧X：aNormal = (±1,0)
             emitFaceGrid(0, minX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2(-1.0f, 0.0f));
             emitFaceGrid(0, maxX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2( 1.0f, 0.0f));
-            // ��Z��aNormal = (0,��1)
+            // 侧Z：aNormal = (0,±1)
             emitFaceGrid(2, minZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f,-1.0f));
             emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f, 1.0f));
         };
@@ -789,6 +887,94 @@ private:
             float maxZ = centerXZ.y + halfW;
             appendBoxColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
         };
+
+        // 判定某墙格到外部的直线路径上是否全为墙，用于让窗洞贯穿厚墙
+        auto isWallCell = [&](int gx, int gy) -> bool {
+            if (gx < 0 || gx >= tileCount || gy < 0 || gy >= tileCount) return false;
+            return room.scene[gy][gx] == "#";
+        };
+        auto hasExteriorWallPath = [&](int gx, int gy) -> bool {
+            if (!isWallCell(gx, gy)) return false;
+            auto pathClear = [&](int dx, int dy, int max) -> bool {
+                int x = gx, y = gy, i = 0;
+                if(isWallCell(gx + dx, gx + dy) == isWallCell(gx - dx, gy - dy))return false;
+                while (x >= 0 && x < tileCount && y >= 0 && y < tileCount ) {
+                    if (!isWallCell(x, y)) return false;
+					if (i >= max) return false;
+                    if (x == 0 || x == tileCount - 1 || y == 0 || y == tileCount - 1) return true;
+                    x += dx;
+                    y += dy;
+                    i++;
+                }
+                return false;
+            };
+            return pathClear(-1, 0, 2) || pathClear(1, 0, 2) || pathClear(0, -1, 2) || pathClear(0, 1, 2);
+        };
+
+        // Pre-calculate window positions based on continuous wall segments
+        std::vector<std::vector<bool>> isCandidate(tileCount, std::vector<bool>(tileCount, false));
+
+        for (int y = 0; y < tileCount; ++y) {
+            for (int x = 0; x < tileCount; ++x) {
+                isCandidate[y][x] = hasExteriorWallPath(x, y);
+            }
+        }
+
+        // Horizontal scan
+        int start, end;
+        for (int y = 0; y < tileCount; y += tileCount - 1) {
+            start = -1, end = -1;
+            for (int x = 0; x <= tileCount; ++x) {
+                bool cand = (x < tileCount) && isCandidate[y][x];
+                if (cand && start == -1) {
+                    start = x;
+                    end = start;
+                } 
+                else if (cand) {
+                    end = x;
+                }
+                else if (!cand && start != -1 && end - start > 6) {
+                    for (int i = start + 2; i < end - 3; i++) {
+                        if (y == 0) {
+                            windowMap[y][i] = isCandidate[y + 1][i];
+                            windowMap[y + 1][i] = isCandidate[y + 1][i];
+                        }
+                        else {
+                            windowMap[y][i] = isCandidate[y - 1][i];
+                            windowMap[y - 1][i] = isCandidate[y - 1][i];
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // Vertical scan
+        for (int x = 0; x < tileCount; x += tileCount - 1) {
+            start = -1, end = -1;
+            for (int y = 0; y <= tileCount; ++y) {
+                bool cand = (y < tileCount) && isCandidate[y][x];
+                if (cand && start == -1) {
+                    start = y;
+                    end = y;
+                }
+                else if (cand) {
+                    end = y;
+                }
+                else if (!cand && start != -1 && end - start > 6) {
+                    for (int i = start + 2; i < end - 3; i++) {
+                        if (x == 0) {
+                            windowMap[i][x] = isCandidate[i][x + 1];
+                            windowMap[i][x + 1] = isCandidate[i][x + 1];
+                        }
+                        else {
+                            windowMap[i][x] = isCandidate[i][x - 1];
+                            windowMap[i][x - 1] = isCandidate[i][x - 1];
+                        }
+                    }
+                }
+            }
+        }
 
         auto drawPlayerAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, float idleT) {
             const float inset = tileSize * 0.10f;
@@ -818,29 +1004,30 @@ private:
 			}
 		};
 
-        // ����/ǽ��
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
                 auto bounds = boundsForCell(x, y);
                 glm::vec3 baseColor = tileColorForCell(room.scene[y][x]);
                 appendFloor(bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
-			appendSky(bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
                 glm::vec3 camPos = cameraPosition_;
 
                 if (room.scene[y][x] == "#" && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
-                    appendWallColumn(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                    if (windowMap[y][x]) {
+                        appendWindowWall(x, y, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                    } else {
+                        appendWallPart(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                    }
                 }
             }
         }
 
-        // ������Ҳ�ֵ + �����˶�����
+        // 玩家和箱子的绘制逻辑
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
             const Pos& e = next_state.player;
             glm::vec3 color(RGB_2_FLT(0xA6D6EA));
             float height = 0.90f;
 
-            // ��������ʱ�䣨������ idleDuration_ ���ƣ�
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
@@ -853,7 +1040,7 @@ private:
                 glm::vec2 dir = ce - cs;
                 if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
                 else dir = glm::vec2(0.0f);
-                moveDirection_ = dir; // �� softcubeShader_ ʹ��
+                moveDirection_ = dir;
 
                 glm::vec2 c = cs + (ce - cs) * moveT;
                 drawPlayerAtCenter(c, color, height, idleT);
@@ -868,7 +1055,6 @@ private:
             }
         };
 
-        // �������Ӳ�ֵ�����ֻ������Σ�
         auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color) {
             for (const auto& kv : boxes) {
                 int id = kv.first;
@@ -898,8 +1084,7 @@ private:
                         drawAtCenter(c, color, height);
                         continue;
                     }
-                } else {
-                    // Ŀ��״̬�в����ڸ����ӣ����类����/��ʧ�������ֵ�ǰ��ʾ���Ƕ�����
+                } else { 
                     if (s.room == roomId) {
                         glm::vec2 c = centerForCell(s.x, s.y);
                         drawAtCenter(c, color, height);
@@ -923,10 +1108,9 @@ private:
     }
 
     void pushVertex(const glm::vec3& pos, const glm::vec3& color) {
-        // ����λ���Զ����㷨�ߣ��򻯰棺���ڶ���λ���ƶϣ�
         glm::vec3 normal = glm::normalize(pos - glm::vec3(0.0f, 0.0f, 0.0f));
         if (glm::length(normal) < 0.01f) {
-            normal = glm::vec3(0.0f, 1.0f, 0.0f); // Ĭ������
+            normal = glm::vec3(0.0f, 1.0f, 0.0f);
         }
         
         vertexData_.push_back(pos.x);
@@ -1005,7 +1189,6 @@ private:
     }
     }
 
-    // GL ��Դ
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
     std::unique_ptr<Shader> shader_;
@@ -1028,7 +1211,6 @@ private:
     GLuint wallTex_ = 0;
     GLuint boxTex_ = 0;
 
-    // �����봰��
     glm::mat4 projection_ = glm::mat4(1.0f);
     glm::mat4 view_ = glm::mat4(1.0f);
     int windowWidth_ = 0;
@@ -1041,9 +1223,8 @@ private:
     std::vector<float> softVertexData_;
     glm::vec2 moveDirection_{0.0f, 0.0f};
 
-    // 2.5D ��ɢ���
-    float cameraYaw_ = 0.0f;                // 0 -> +X
-    float cameraPitch_ = -45.0f;            // �̶�����
+    float cameraYaw_ = 0.0f;
+    float cameraPitch_ = -45.0f;
     const float fixedPitch_ = -45.0f;
     float currentRoomHalfExtent_ = 5.0f;
     glm::vec3 cameraPosition_{ 0.0f, 3.0f, 0.0f };
@@ -1054,22 +1235,22 @@ private:
     const float eyeHeightOffset_ = 3.0f;
     const bool hidePlayerMesh_ = false;
 
-    // ��ת����״̬
+    // 摄像机旋转状态
     bool rotating_ = false;
     float rotateStartYaw_ = 0.0f;
     float rotateTargetYaw_ = 0.0f;
     float rotateDuration_ = 0.0f;
     float rotateStartTime_ = 0.0f;
 
-    // λ�ƶ���״̬�����/���ӣ�
+    // 移动动画状态（加速/减速）
     bool moving_ = false;
     float moveDuration_ = 0.0f;
     float moveStartTime_ = 0.0f;
     
-    // ����ϵͳ
+    // 光照系统
     std::unique_ptr<LabLightingSystem> lightingSystem_;
 
-    // ��������״̬����ң�
+    // 待机动画状态（摇晃）
     float idleDuration_ = 3.0f;
 };
 
@@ -1103,7 +1284,7 @@ public:
     void render(const GameState* state, const Level* level, const GameState* next_state = nullptr) {
         bool renderedScene = false;
         if (showGameScene_ && state && level) {
-            // �ݴ�����δ�ṩ next_state����ʹ�� state ����
+            // 如果未提供 next_state，则使用 state 渲染
             const GameState& nextRef = next_state ? *next_state : *state;
             renderer_.render(*state, *level, nextRef);
             renderedScene = true;
@@ -1135,24 +1316,24 @@ public:
         }
     }
 
-    // call from GLFW key callback: left/right arrows rotate camera 90�� and camera position updates next render
+    // call from GLFW key callback: left/right arrows rotate camera 90° and camera position updates next render
     void handleKey(int key) {
         if (!showGameScene_) return;
 
-        // �����������ת�������µ���ת����
+        // 如果正在旋转，则忽略新的旋转请求
         if (renderer_.isRotating()) return;
 
         if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true, 0.5);
         else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
     }
 
-    // ��������Ӧ�ò�����λ�ƶ���
+    // 开始响应移动动画
     void beginMoveAnimation(float duration) {
         if (!showGameScene_) return;
         renderer_.beginMoveAnimation(duration);
     }
 
-    // ��������ѯ����Ƿ�����ת�У��������������
+    // 查询摄像机是否正在旋转（用于阻塞输入）
     bool isCameraRotating() const {
         return renderer_.isRotating();
     }

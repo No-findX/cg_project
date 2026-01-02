@@ -6,12 +6,17 @@ layout(location = 3) in vec3 aTex;    // aTex.xy: 相对中心偏移[-1,1]；aTex.z: ha
 
 uniform mat4 view;
 uniform mat4 projection;
+uniform mat4 lightSpaceMatrix;
 
 uniform vec2 direction; // XZ 运动方向（单位向量或(0,0)）
 uniform float moveT;    // 0..1
 uniform float idleT;    // 0..1
 
-out vec3 vColor;
+out vec3 FragPos;
+out vec3 Normal;
+out vec3 VertexColor;
+out vec4 FragPosLightSpace;
+out vec2 TexCoord;
 
 // 待机 Squash & Stretch：XZ 径向膨胀/收缩，Y 反向微缩放
 vec3 idlePos(vec3 p, vec3 tex, float t) {
@@ -88,12 +93,23 @@ vec3 movingPos(vec3 p, vec2 n2, vec3 tex, vec2 dir, float t) {
 }
 
 void main() {
-    vColor = aColor;
-
     // 先应用待机形变
     vec3 pIdle = idlePos(aPos, aTex, idleT);
     // 再应用运动形变（若运动中）
     vec3 p = movingPos(pIdle, aNormal, aTex, direction, moveT);
+
+    FragPos = p;
+    
+    // 简单法线估算：侧面使用 aNormal，顶底面默认向上
+    vec3 N = vec3(0.0, 1.0, 0.0);
+    if (length(aNormal) > 0.001) {
+        N = vec3(aNormal.x, 0.0, aNormal.y);
+    }
+    Normal = normalize(N);
+    
+    VertexColor = aColor;
+    TexCoord = vec2(0.0); // 软立方体暂无纹理坐标
+    FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
 
     gl_Position = projection * view * vec4(p, 1.0);
 }
