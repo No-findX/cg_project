@@ -182,6 +182,7 @@
     <ClCompile Include="glad.c" />
     <ClCompile Include="model\src\gameplay.cpp" />
     <ClCompile Include="model\src\level_loader.cpp" />
+    <ClCompile Include="view\stb_image.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="model\include\gameplay.hpp" />
@@ -191,12 +192,17 @@
     <ClInclude Include="view\button_manager.hpp" />
     <ClInclude Include="view\game_view.hpp" />
     <ClInclude Include="view\shader.hpp" />
+    <ClInclude Include="view\skybox_loader.hpp" />
     <ClInclude Include="view\uimanager.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="model\levels\l1.json" />
     <None Include="view\shader\basic.frag" />
     <None Include="view\shader\basic.vert" />
+    <None Include="view\shader\skybox.frag" />
+    <None Include="view\shader\skybox.vert" />
+    <None Include="view\shader\softcube.frag" />
+    <None Include="view\shader\softcube.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
