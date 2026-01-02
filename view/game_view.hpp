@@ -24,6 +24,7 @@
 #include "model/include/level_loader.hpp"
 #include "view/uimanager.hpp"
 #include "view/shader.hpp"
+#include "view/gamelight.hpp"
 #include "view/skybox_loader.hpp"
 
 namespace detail {
@@ -32,18 +33,25 @@ namespace detail {
 
 class GameRenderer {
 public:
+    // åˆå§‹åŒ–æ¸²æŸ“å™¨ï¼šè®¾ç½®çª—å£å°ºå¯¸ã€åŠ è½½ Shaderã€åˆå§‹åŒ–å…‰ç…§ç³»ç»Ÿã€é˜´å½±èµ„æºã€Skyboxã€VAO/VBO ç­‰
     void init(int windowWidth, int windowHeight) {
         windowWidth_ = windowWidth;
         windowHeight_ = windowHeight;
         textureWidth_ = windowWidth_;
         textureHeight_ = windowHeight_;
 
-        // Ê¹ÓÃ·â×°µÄ Shader Àà´ÓÎÄ¼ş¼ÓÔØ
+        // ä½¿ç”¨å°è£…çš„ Shader ç±»åŠ è½½ç€è‰²å™¨
+        shader_ = std::make_unique<Shader>("view/shader/pbr.vert", "view/shader/pbr.frag");
+        
+        // åˆå§‹åŒ–å…‰ç…§ç³»ç»Ÿ
+        lightingSystem_ = std::make_unique<LabLightingSystem>();
+        depthShader_ = std::make_unique<Shader>("view/shader/shadow_depth.vert", "view/shader/shadow_depth.frag");
+        setupShadowResources();
         basicShader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
         softcubeShader_ = std::make_unique<Shader>("view/shader/softcube.vert", "view/shader/softcube.frag");
         skyboxShader_ = std::make_unique<Shader>("view/shader/skybox.vert", "view/shader/skybox.frag");
 
-        // ³õÊ¼»¯ SkyBox£¨ÁùÃæÎÆÀíÂ·¾¶£©
+        // åˆå§‹åŒ– SkyBoxï¼ˆåŠ è½½ç«‹æ–¹ä½“è´´å›¾ï¼‰
         std::vector<std::string> faces = {
             "view/assest/skybox/px.png",
             "view/assest/skybox/nx.png",
@@ -53,27 +61,29 @@ public:
             "view/assest/skybox/nz.png"
         };
         skybox_ = std::make_unique<SkyBox>(faces);
-        // Ô¼¶¨ skyboxShader_ µÄ²ÉÑùÆ÷ÃûÎª "skybox"£¨°ó¶¨µ½ GL_TEXTURE0£©
+        // ç»‘å®š skyboxShader_ çš„çº¹ç†å•å…ƒä¸º "skybox"ï¼ˆç»‘å®šåˆ° GL_TEXTURE0ï¼‰
         if (skyboxShader_) {
             skyboxShader_->use();
             skyboxShader_->setInt("skybox", 0);
             glUseProgram(0);
         }
 
-        // »ù´¡¼¸ºÎ£¨pos3 + color3 + tex2£©
+        // è®¾ç½® VAO/VBOï¼špos3 + normal3 + color3 + tex2
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);
         glBindVertexArray(vao_);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_);
         glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
 
-        const GLsizei basicStride = static_cast<GLsizei>(8 * sizeof(float));
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, basicStride, (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, basicStride, (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, basicStride, (void*)(6 * sizeof(float)));
+        const GLsizei pbrStride = static_cast<GLsizei>(11 * sizeof(float));
+        glEnableVertexAttribArray(0); // Pos
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, pbrStride, (void*)0);
+        glEnableVertexAttribArray(1); // Normal
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, pbrStride, (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2); // Color
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, pbrStride, (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(3); // Tex
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, pbrStride, (void*)(9 * sizeof(float)));
 
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
@@ -82,14 +92,14 @@ public:
         wallTex_ = loadTexture2D("view/assest/texture/wall.png");
         boxTex_ = loadTexture2D("view/assest/texture/box.png");
 
-        // ÉèÖÃ basicShader_ µÄ²ÉÑùÆ÷
+        // è®¾ç½® basicShader_ çš„çº¹ç†å•å…ƒ
         if (basicShader_) {
             basicShader_->use();
             basicShader_->setInt("Texture", 0);
             glUseProgram(0);
         }
 
-        // ÈíÌåÁ¢·½Ìå£¨pos3 + color3 + normal2 + tex3£©
+        // è®¾ç½®è½¯ä½“ï¼ˆSoftCubeï¼‰çš„ VAO/VBOï¼ˆpos3 + color3 + normal2 + tex3ï¼‰
         glGenVertexArrays(1, &vaoSoft_);
         glGenBuffers(1, &vboSoft_);
         glBindVertexArray(vaoSoft_);
@@ -118,11 +128,11 @@ public:
     void rotateCamera(float /*deltaX*/, float /*deltaY*/) {
     }
 
-    // Ğı×ªÊ±¾Ü¾øĞÂµÄĞı×ªÇëÇó£¬±ÜÃâ½Ç¶ÈÆ¯ÒÆ
+    // æ‘„åƒæœºæ—‹è½¬ 90 åº¦ï¼ˆå¹³æ»‘è¿‡æ¸¡ï¼‰
     void rotateCameraBy90(bool left, float rotationtime = 0.0) {
         const float step = left ? -90.0f : 90.0f;
 
-        // ÈôÕıÔÚĞı×ª£¬ÔòºöÂÔĞÂµÄĞı×ªÊäÈë£¨ÊäÈëËø¶¨£©
+        // å¦‚æœæ­£åœ¨æ—‹è½¬ï¼Œåˆ™å¿½ç•¥æ–°çš„æ—‹è½¬è¯·æ±‚
         if (rotating_) {
             return;
         }
@@ -146,9 +156,9 @@ public:
         }
     }
 
-    // ¿ªÊ¼Ò»´ÎÎ»ÒÆ¶¯»­£¨ÓÃÓÚÍæ¼Ò/Ïä×ÓÍÆ½ø£©
+    // å¼€å§‹ç§»åŠ¨åŠ¨ç”»ï¼ˆç”¨äºå¹³æ»‘ç§»åŠ¨ç©å®¶/ç®±å­ï¼‰
     void beginMoveAnimation(float duration) {
-        // Ëõ¶ÌÊ±³¤ÒÔÌáÉıÇá¿ì¸Ğ£¬Èôµ÷ÓÃÕßÌá¹©¸ü³¤Ê±³¤£¬¿É°´µ÷ÓÃÕßÖµ
+        // è®¾ç½®ç§»åŠ¨æŒç»­æ—¶é—´ï¼Œå¦‚æœæœªæä¾›æˆ–æ— æ•ˆï¼Œåˆ™ä½¿ç”¨é»˜è®¤å€¼
         const float preferred = 0.3f;
         moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
         moveStartTime_ = static_cast<float>(glfwGetTime());
@@ -159,7 +169,7 @@ public:
         return mapCameraRelativeInput(input);
     }
 
-    // ²éÑ¯µ±Ç°ÊÇ·ñ´¦ÓÚÏà»úĞı×ªÖĞ£¨¹©ÊäÈë²ã¼ÓËø£©
+    // æŸ¥è¯¢å½“å‰æ˜¯å¦æ­£åœ¨è¿›è¡Œæ‘„åƒæœºæ—‹è½¬åŠ¨ç”»
     bool isRotating() const {
         return rotating_;
     }
@@ -168,24 +178,27 @@ public:
         if (!basicShader_) return;
         if (level.rooms.empty()) return;
 
-        // Ïà»úĞı×ª¶¯»­£¨Æ½»¬£©
+        // æ›´æ–°æ‘„åƒæœºæ—‹è½¬åŠ¨ç”»
         if (rotating_) {
             const float now = static_cast<float>(glfwGetTime());
             float elapsed = now - rotateStartTime_;
-            if (elapsed >= rotateDuration_) {
+            if (elapsed >= rotateDuration_ * 0.98f) { // æ¥è¿‘ç»“æŸæ—¶ç›´æ¥å®Œæˆ
                 cameraYaw_ = rotateTargetYaw_;
+                // è§„èŒƒåŒ–è§’åº¦åˆ° [-180, 180] èŒƒå›´ï¼Œé˜²æ­¢æ•°å€¼æº¢å‡º
+                while (cameraYaw_ > 180.0f) cameraYaw_ -= 360.0f;
+                while (cameraYaw_ < -180.0f) cameraYaw_ += 360.0f;
                 rotating_ = false;
             } else {
                 float u = elapsed / rotateDuration_;
                 if (u < 0.0f) u = 0.0f;
                 if (u > 1.0f) u = 1.0f;
-                float p = u * u * (3.0f - 2.0f * u);
+                float p = u * u * (3.0f - 2.0f * u); // å¹³æ»‘æ’å€¼
                 float delta = (rotateTargetYaw_ >= rotateStartYaw_) ? (90.0f) : (-90.0f);
                 cameraYaw_ = rotateStartYaw_ + delta * p;
             }
         }
 
-        // Î»ÒÆ¶¯»­Ê±¼ä²ÎÊı£¨ÔÈ¼ÓËÙ-ÔÈËÙ-ÔÈ¼õËÙ£©
+        // è®¡ç®—ç§»åŠ¨åŠ¨ç”»æ’å€¼ï¼ˆåŠ é€Ÿ-åŒ€é€Ÿ-å‡é€Ÿï¼‰
         float moveT = 1.0f;
         if (moving_) {
             const float now = static_cast<float>(glfwGetTime());
@@ -198,11 +211,11 @@ public:
                 if (u < 0.0f) u = 0.0f;
                 if (u > 1.0f) u = 1.0f;
 
-                // ËÙ¶ÈÌİĞÎ£ºÇ° 20% ¼ÓËÙ£¬ºó 20% ¼õËÙ£¬ÖĞ¼äÔÈËÙ
+                // é€Ÿåº¦æ›²çº¿ï¼šå‰ 20% åŠ é€Ÿï¼Œå 20% å‡é€Ÿï¼Œä¸­é—´åŒ€é€Ÿ
                 const float acc = 0.2f;
                 const float dec = 0.2f;
                 const float constv = 1.0f - acc - dec; // 0.6
-                // ¹éÒ»»¯×î´óËÙ¶È£¬Ê¹×ÜÎ»ÒÆÎª 1
+                // å½’ä¸€åŒ–æœ€å¤§é€Ÿåº¦ï¼Œä½¿å¾—æ€»ä½ç§»ä¸º 1
                 const float vmax = 1.0f / (constv + 0.5f * (acc + dec));
 
                 if (u <= acc) {
@@ -266,6 +279,10 @@ public:
             glDeleteBuffers(1, &vboSoft_);
             vboSoft_ = 0;
         }
+        if (depthShader_) {
+            glDeleteProgram(depthShader_->ID);
+            depthShader_.reset();
+        }
         if (vaoSoft_) {
             glDeleteVertexArrays(1, &vaoSoft_);
             vaoSoft_ = 0;
@@ -291,6 +308,14 @@ public:
             glDeleteTextures(static_cast<GLsizei>(roomTextures_.size()), roomTextures_.data());
             roomTextures_.clear();
         }
+        if (depthMap_) {
+            glDeleteTextures(1, &depthMap_);
+            depthMap_ = 0;
+        }
+        if (depthMapFBO_) {
+            glDeleteFramebuffers(1, &depthMapFBO_);
+            depthMapFBO_ = 0;
+        }
         if (tileTex_) { glDeleteTextures(1, &tileTex_); tileTex_ = 0; }
         if (wallTex_) { glDeleteTextures(1, &wallTex_); wallTex_ = 0; }
         if (boxTex_)  { glDeleteTextures(1, &boxTex_);  boxTex_  = 0; }
@@ -302,7 +327,7 @@ private:
         projection_ = glm::perspective(glm::radians(55.0f), aspect, 0.1f, 200.0f);
     }
 
-    // ÎÆÀí¼ÓÔØ¹¤¾ß
+    // åŠ è½½çº¹ç†å·¥å…·å‡½æ•°
     GLuint loadTexture2D(const char* path) {
         int w = 0, h = 0, n = 0;
         stbi_set_flip_vertically_on_load(1);
@@ -354,17 +379,68 @@ private:
         }
     }
 
-    // ĞÂÔö£ºÖ§³Ö²åÖµäÖÈ¾£¬ÒÀ¾İ state Óë next_state ÒÔ¼° moveT
+    void setupShadowResources() {
+        glGenFramebuffers(1, &depthMapFBO_);
+        glGenTextures(1, &depthMap_);
+        glBindTexture(GL_TEXTURE_2D, depthMap_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, shadowMapResolution_, shadowMapResolution_, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap_, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+ 
+    glm::mat4 calculateLightSpaceMatrix(const glm::vec3& roomCenter, float halfExtent) const {
+        float orthoRange = halfExtent + 4.0f;
+        glm::mat4 lightProjection = glm::ortho(-orthoRange, orthoRange, -orthoRange, orthoRange, 0.1f, 50.0f);
+        glm::vec3 lightDir = glm::normalize(lightingSystem_->getMainLight().direction);
+        glm::vec3 lightPos = roomCenter - lightDir * 20.0f; // ä»è¿œå¤„å…‰æºä½ç½®è¿›è¡Œæ­£äº¤æŠ•å½±
+        glm::mat4 lightView = glm::lookAt(lightPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        return lightProjection * lightView;
+    }
+ 
+    void renderShadowPass(const glm::mat4& lightSpaceMatrix, const glm::mat4& model, GLsizei vertexCount) {
+        if (!depthShader_ || vertexCount <= 0) return;
+        GLint prevViewport[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+        GLint prevFBO = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
+ 
+        glViewport(0, 0, shadowMapResolution_, shadowMapResolution_);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_);
+        glClear(GL_DEPTH_BUFFER_BIT);
+ 
+        glCullFace(GL_FRONT);
+        depthShader_->use();
+        depthShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+        depthShader_->setMat4("model", model);
+        glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+        glUseProgram(0);
+        glCullFace(GL_BACK);
+ 
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+    }
+
     void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT) {
         if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
+        vertexData_.clear();
+        skyVertexData_.clear();
         floorVertexData_.clear();
         wallVertexData_.clear();
         boxVertexData_.clear();
         softVertexData_.clear();
-        moveDirection_ = glm::vec2(0.0f); // Ä¬ÈÏÎŞ·½Ïò£¨ÓÃÓÚ·ÇÒÆ¶¯»ò·Ç±¾·¿¼ä£©
+        moveDirection_ = glm::vec2(0.0f); // é»˜è®¤æ— æ–¹å‘ï¼ˆé™æ­¢çŠ¶æ€ï¼‰
 
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
@@ -387,10 +463,62 @@ private:
         glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
-        glm::vec3 cameraPos = roomCenter + offsetDir * glm::vec3(1.25f, 1.25f, 1.25f) * currentRoomHalfExtent_ + glm::vec3(0.0f, 4.0f, 0.0f);
+        glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
+        cameraPosition_ = cameraPos;
         view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
-        // »æÖÆÌì¿ÕºĞ£¨ÏÈ»æÖÆ£¬Ê¹ÓÃÎŞÆ½ÒÆµÄÊÓ¾ØÕó£©
+        // ç§»é™¤æ—§çš„ PBR/Shadow æ¸²æŸ“é€»è¾‘
+        /*
+        // ...existing code...
+        */
+        
+        glm::mat4 model = glm::mat4(1.0f);
+        glm::mat4 lightSpaceMatrix = calculateLightSpaceMatrix(roomCenter, currentRoomHalfExtent_);
+
+        // ä¿å­˜å½“å‰ FBOï¼ˆå¯èƒ½æ˜¯ roomTextures_ çš„ FBOï¼‰
+        GLint prevFBO = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
+        GLint prevViewport[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+        // 1. Shadow Pass (é˜´å½±è´´å›¾ç”Ÿæˆ)
+        glViewport(0, 0, shadowMapResolution_, shadowMapResolution_);
+        glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO_);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        
+        if (depthShader_) {
+            depthShader_->use();
+            depthShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            depthShader_->setMat4("model", model);
+            
+            glCullFace(GL_FRONT);
+            
+            auto drawShadowBatch = [&](const std::vector<float>& data) {
+                if (data.empty()) return;
+                glBindVertexArray(vao_);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 11));
+            };
+            
+            drawShadowBatch(floorVertexData_);
+            drawShadowBatch(wallVertexData_);
+            drawShadowBatch(boxVertexData_);
+            
+            glCullFace(GL_BACK);
+        }
+        
+        // æ¢å¤ä¹‹å‰çš„ FBO å’Œ Viewport
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+        
+        // æ¸…é™¤æ·±åº¦ç¼“å†²ä»¥ä¾¿è¿›è¡Œä¸»æ¸²æŸ“ï¼ˆé¢œè‰²ç¼“å†²å·²åœ¨å¤–éƒ¨æ¸…é™¤ï¼‰
+        glClear(GL_DEPTH_BUFFER_BIT);
+
+        // 2. Skybox Pass (å¤©ç©ºç›’æ¸²æŸ“)
+        cameraPos = roomCenter + offsetDir * glm::vec3(1.25f, 1.25f, 1.25f) * currentRoomHalfExtent_ + glm::vec3(0.0f, 4.0f, 0.0f);
+        view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+
         if (skybox_ && skyboxShader_) {
             glDepthFunc(GL_LEQUAL);
             skyboxShader_->use();
@@ -402,31 +530,64 @@ private:
             glDepthFunc(GL_LESS);
         }
 
-        // »æÖÆ¾²Ì¬¼¸ºÎ£¨µØÃæ/Ç½/Ïä×Ó£©- ·ÖÅú°ó¶¨²»Í¬ÎÆÀí
-        basicShader_->use();
-        basicShader_->setMat4("view", view_);
-        basicShader_->setMat4("projection", projection_);
-        glBindVertexArray(vao_);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+        // 3. PBR Lighting Pass (åœºæ™¯ç‰©ä½“æ¸²æŸ“ï¼šåœ°æ¿ã€å¢™å£ã€ç®±å­)
+        if (shader_) {
+            shader_->use();
+            
+            // Lighting Uniforms
+            lightingSystem_->setupCeilingLights(room.size, wallHeight_, tileWorldSize_);
+            const auto& pointLights = lightingSystem_->getPointLights();
+            shader_->setInt("numPointLights", static_cast<int>(pointLights.size()));
+            for (size_t i = 0; i < pointLights.size(); ++i) {
+                std::string idx = std::to_string(i);
+                shader_->setVec3("pointLightPositions[" + idx + "]", pointLights[i].position);
+                shader_->setVec3("pointLightColors[" + idx + "]", pointLights[i].color);
+                shader_->setFloat("pointLightIntensities[" + idx + "]", pointLights[i].intensity);
+                shader_->setFloat("pointLightRadii[" + idx + "]", pointLights[i].radius);
+            }
 
-        auto drawBatch = [&](const std::vector<float>& data, GLuint tex) {
-            if (data.empty()) return;
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 8));
-        };
+            const auto& mainLight = lightingSystem_->getMainLight();
+            shader_->setVec3("lightDir", mainLight.direction);
+            shader_->setVec3("lightColor", mainLight.color);
+            shader_->setFloat("lightIntensity", mainLight.intensity);
+            shader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
+            shader_->setVec3("viewPos", cameraPos);
 
-        drawBatch(floorVertexData_, tileTex_);
-        drawBatch(wallVertexData_, wallTex_);
-        drawBatch(boxVertexData_, boxTex_);
+            shader_->setFloat("metallic", 0.0f);
+            shader_->setFloat("roughness", 0.5f);
+            shader_->setFloat("ao", 1.0f);
+            shader_->setMat4("model", model);
+            shader_->setMat4("view", view_);
+            shader_->setMat4("projection", projection_);
+            shader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            
+            // Shadow Map
+            shader_->setInt("shadowMap", 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, depthMap_);
+            
+            // Texture settings
+            shader_->setInt("albedoMap", 0);
+            shader_->setInt("useTexture", 1);
 
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-        glUseProgram(0);
+            auto drawPBRBatch = [&](const std::vector<float>& data, GLuint tex) {
+                if (data.empty()) return;
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glBindVertexArray(vao_);
+                glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+                glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), data.data(), GL_DYNAMIC_DRAW);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 11));
+            };
 
-        // »æÖÆ½ÇÉ«£¨ÈíÌåÁ¢·½Ìå + ×ÅÉ«Æ÷ĞÎ±ä£©
+            drawPBRBatch(floorVertexData_, tileTex_);
+            drawPBRBatch(wallVertexData_, wallTex_);
+            drawPBRBatch(boxVertexData_, boxTex_);
+            
+            glUseProgram(0);
+        }
+
+        // 4. SoftCube (Player) Pass (ç©å®¶è½¯ä½“æ¸²æŸ“)
         if (!softVertexData_.empty() && softcubeShader_) {
             softcubeShader_->use();
             softcubeShader_->setMat4("view", view_);
@@ -434,13 +595,46 @@ private:
             softcubeShader_->setVec2("direction", moveDirection_);
             softcubeShader_->setFloat("moveT", moveT);
 
-            // ´ı»úÊ±¼ä£¨ÖÜÆÚ idleDuration_£©
+            // å¾…æœºåŠ¨ç”»æ—¶é—´ (idleDuration_)
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
                 idleT = std::fmod(now, idleDuration_) / idleDuration_;
             }
             softcubeShader_->setFloat("idleT", idleT);
+
+            // PBR Uniforms
+            softcubeShader_->setMat4("lightSpaceMatrix", lightSpaceMatrix);
+            softcubeShader_->setMat4("model", glm::mat4(1.0f));
+
+            const auto& pointLights = lightingSystem_->getPointLights();
+            softcubeShader_->setInt("numPointLights", static_cast<int>(pointLights.size()));
+            for (size_t i = 0; i < pointLights.size(); ++i) {
+                std::string idx = std::to_string(i);
+                softcubeShader_->setVec3("pointLightPositions[" + idx + "]", pointLights[i].position);
+                softcubeShader_->setVec3("pointLightColors[" + idx + "]", pointLights[i].color);
+                softcubeShader_->setFloat("pointLightIntensities[" + idx + "]", pointLights[i].intensity);
+                softcubeShader_->setFloat("pointLightRadii[" + idx + "]", pointLights[i].radius);
+            }
+
+            const auto& mainLight = lightingSystem_->getMainLight();
+            softcubeShader_->setVec3("lightDir", mainLight.direction);
+            softcubeShader_->setVec3("lightColor", mainLight.color);
+            softcubeShader_->setFloat("lightIntensity", mainLight.intensity);
+            softcubeShader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
+            softcubeShader_->setVec3("viewPos", cameraPos);
+
+            softcubeShader_->setFloat("metallic", 0.0f);
+            softcubeShader_->setFloat("roughness", 0.5f);
+            softcubeShader_->setFloat("ao", 1.0f);
+            
+            // Shadow Map
+            softcubeShader_->setInt("shadowMap", 1);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, depthMap_);
+            
+            // Texture settings (disable for softcube)
+            softcubeShader_->setInt("useTexture", 0);
 
             glBindVertexArray(vaoSoft_);
             glBindBuffer(GL_ARRAY_BUFFER, vboSoft_);
@@ -453,17 +647,26 @@ private:
         glUseProgram(0);
     }
 
+    glm::vec3 getCameraPosition() const {
+        return cameraPosition_;
+    }
+
     float appendRoomGeometry(const Room& room, int roomId, const GameState& state, const GameState& next_state, float moveT, float tileSize) {
         const int tileCount = room.size;
         const float boardHalf = tileCount * tileSize * 0.5f;
 
+        std::vector<std::vector<bool>> windowMap(tileCount, std::vector<bool>(tileCount, false));
+
         playerEyePosition_ = glm::vec3(0.0f, 0.02f, 0.0f);
 
-        // »ù´¡¼¸ºÎ¶¥µã push£ºpos3 + color3 + tex2
-        auto pushVertex = [](std::vector<float>& buf, const glm::vec3& pos, const glm::vec3& color, const glm::vec2& tex) {
+        // è¾…åŠ©å‡½æ•°ï¼šå‘ç¼“å†²åŒºæ·»åŠ é¡¶ç‚¹æ•°æ® (pos3 + normal3 + color3 + tex2)
+        auto pushVertex = [](std::vector<float>& buf, const glm::vec3& pos, const glm::vec3& normal, const glm::vec3& color, const glm::vec2& tex) {
             buf.push_back(pos.x);
             buf.push_back(pos.y);
             buf.push_back(pos.z);
+            buf.push_back(normal.x);
+            buf.push_back(normal.y);
+            buf.push_back(normal.z);
             buf.push_back(color.r);
             buf.push_back(color.g);
             buf.push_back(color.b);
@@ -472,15 +675,19 @@ private:
         };
 
         auto pushQuad = [&](std::vector<float>& buf, const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3, const glm::vec3& color) {
-            pushVertex(buf, v0, color, glm::vec2(0.0f, 0.0f));
-            pushVertex(buf, v1, color, glm::vec2(1.0f, 0.0f));
-            pushVertex(buf, v2, color, glm::vec2(1.0f, 1.0f));
-            pushVertex(buf, v0, color, glm::vec2(0.0f, 0.0f));
-            pushVertex(buf, v2, color, glm::vec2(1.0f, 1.0f));
-            pushVertex(buf, v3, color, glm::vec2(0.0f, 1.0f));
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 normal = glm::normalize(glm::cross(edge1, edge2));
+
+            pushVertex(buf, v0, normal, color, glm::vec2(0.0f, 0.0f));
+            pushVertex(buf, v1, normal, color, glm::vec2(1.0f, 0.0f));
+            pushVertex(buf, v2, normal, color, glm::vec2(1.0f, 1.0f));
+            pushVertex(buf, v0, normal, color, glm::vec2(0.0f, 0.0f));
+            pushVertex(buf, v2, normal, color, glm::vec2(1.0f, 1.0f));
+            pushVertex(buf, v3, normal, color, glm::vec2(0.0f, 1.0f));
         };
 
-        // ÈíÌåÁ¢·½Ìå£ºÀ©Õ¹²¼¾Ö push
+        // è¾…åŠ©å‡½æ•°ï¼šå‘è½¯ä½“ç¼“å†²åŒºæ·»åŠ é¡¶ç‚¹æ•°æ® (pos3 + color3 + normal2 + tex3)
         auto pushSoftVertex = [&](const glm::vec3& pos, const glm::vec3& color, const glm::vec2& n2, const glm::vec3& tex) {
             softVertexData_.push_back(pos.x);
             softVertexData_.push_back(pos.y);
@@ -497,7 +704,7 @@ private:
 
         auto pushSoftQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3,
                                 const glm::vec3& color, const glm::vec2& n2, float cx, float cz, float halfW) {
-            // aTex.xy = Ïà¶ÔÖĞĞÄ¹éÒ»»¯Æ«ÒÆ£¬aTex.z = halfW
+            // aTex.xy = å½’ä¸€åŒ–åç§»ï¼ŒaTex.z = halfW
             auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                 float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                 float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
@@ -516,26 +723,56 @@ private:
             glm::vec3 v1(maxX, 0.0f, minZ);
             glm::vec3 v2(maxX, 0.0f, maxZ);
             glm::vec3 v3(minX, 0.0f, maxZ);
-            pushQuad(floorVertexData_, v0, v1, v2, v3, color);
+            pushQuad(floorVertexData_, v0, v3, v2, v1, color);
         };
 
-        auto appendWallColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+        auto appendWallPart = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
             glm::vec3 topColor = color;
             glm::vec3 sideColor = color * 0.85f;
             glm::vec3 top0(minX, maxY, minZ);
             glm::vec3 top1(maxX, maxY, minZ);
             glm::vec3 top2(maxX, maxY, maxZ);
             glm::vec3 top3(minX, maxY, maxZ);
-            pushQuad(wallVertexData_, top0, top1, top2, top3, topColor);
+            // é¡¶éƒ¨é¢ï¼šåŸé¡ºåºå¯¼è‡´æ³•çº¿æœä¸‹ï¼Œæ”¹ä¸ºé€†æ—¶é’ˆ(top0->top3->top2->top1)ä½¿å…¶æœä¸Š
+            pushQuad(wallVertexData_, top0, top3, top2, top1, topColor);
 
             glm::vec3 bottom0(minX, minY, minZ);
             glm::vec3 bottom1(maxX, minY, minZ);
             glm::vec3 bottom2(maxX, minY, maxZ);
             glm::vec3 bottom3(minX, minY, maxZ);
-            pushQuad(wallVertexData_, bottom0, bottom1, top1, top0, sideColor);
-            pushQuad(wallVertexData_, bottom1, bottom2, top2, top1, sideColor);
-            pushQuad(wallVertexData_, bottom2, bottom3, top3, top2, sideColor);
-            pushQuad(wallVertexData_, bottom3, bottom0, top0, top3, sideColor);
+            // ä¾§é¢1 (minZ)ï¼šåŸé¡ºåºæ³•çº¿æœå†…(+Z)ï¼Œæ”¹ä¸º(bottom1->bottom0->top0->top1)ä½¿å…¶æœå¤–(-Z)
+            pushQuad(wallVertexData_, bottom1, bottom0, top0, top1, sideColor);
+            // ä¾§é¢2 (maxX)ï¼šåŸé¡ºåºæ³•çº¿æœå†…(-X)ï¼Œæ”¹ä¸º(bottom2->bottom1->top1->top2)ä½¿å…¶æœå¤–(+X)
+            pushQuad(wallVertexData_, bottom2, bottom1, top1, top2, sideColor);
+            pushQuad(wallVertexData_, bottom3, bottom2, top2, top3, sideColor);
+            pushQuad(wallVertexData_, bottom0, bottom3, top3, top0, sideColor);
+        };
+
+        auto appendWindowWall = [&](int gx, int gy, float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+            float h = maxY - minY;
+            float w = maxX - minX;
+            float d = maxZ - minZ;
+            
+            float winBottom = minY + h * 0.3f;
+            float winTop = minY + h * 0.7f;
+            float pillarRatio = 0.2f;
+            float pW = w * pillarRatio;
+            float pD = d * pillarRatio;
+
+            // Bottom
+            appendWallPart(minX, maxX, minZ, maxZ, minY, winBottom, color);
+            // Top
+            appendWallPart(minX, maxX, minZ, maxZ, winTop, maxY, color);
+            
+            // Pillars
+            if((gx == 0 || (gx > 0 && windowMap[gy][gx - 1] != true)) && (gy == 0 || (gy > 0 && windowMap[gy - 1][gx] != true)))
+                appendWallPart(minX, minX + pW, minZ, minZ + pD, winBottom, winTop, color);
+            if((gx == tileCount - 1 || (gx < tileCount - 1 && windowMap[gy][gx + 1] != true)) && (gy == 0 || (gy > 0 && windowMap[gy - 1][gx] != true)))
+                appendWallPart(maxX - pW, maxX, minZ, minZ + pD, winBottom, winTop, color);
+            if((gx == 0 || (gx > 0 && windowMap[gy][gx - 1] != true)) && (gy == tileCount - 1 || (gy < tileCount - 1 && windowMap[gy + 1][gx] != true)))
+                appendWallPart(minX, minX + pW, maxZ - pD, maxZ, winBottom, winTop, color);
+            if((gx == tileCount - 1 || (gx < tileCount - 1 && windowMap[gy][gx + 1] != true)) && (gy == tileCount - 1 || (gy < tileCount - 1 && windowMap[gy + 1][gx] != true)))
+                appendWallPart(maxX - pW, maxX, maxZ - pD, maxZ, winBottom, winTop, color);
         };
 
         auto appendBoxColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
@@ -557,7 +794,7 @@ private:
             pushQuad(boxVertexData_, bottom3, bottom0, top0, top3, sideColor);
         };
 
-        // CPU ¶ËÈíÌåÁ¢·½Ìå£º²»×ö´ı»úĞÎ±ä£¬Ö»Êä³öÏ¸·ÖÍø¸ñÓë aNormal/aTex
+        // CPU ç”Ÿæˆè½¯ä½“ç½‘æ ¼ï¼šç»†åˆ†å¹³é¢ï¼Œåªåœ¨ç»†åˆ†é¡¶ç‚¹ä¸Šè®¾ç½® aNormal/aTex
         auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
             const glm::vec3& color, float /*amp*/, float /*timeT*/) {
             const int RES = 16;
@@ -588,24 +825,24 @@ private:
                         float vv1 = v0 + (v1 - v0) * b1;
 
                         glm::vec3 p00, p10, p11, p01;
-                        if (axis == 1) { // ¶¥/µ× (x,z)
+                        if (axis == 1) { // é¡¶/åº• (x,z)
                             p00 = glm::vec3(uu0, fixed, vv0);
                             p10 = glm::vec3(uu1, fixed, vv0);
                             p11 = glm::vec3(uu1, fixed, vv1);
                             p01 = glm::vec3(uu0, fixed, vv1);
-                        } else if (axis == 0) { // ¡ÀX (y,z)
+                        } else if (axis == 0) { // ä¾§X (y,z)
                             p00 = glm::vec3(fixed, uu0, vv0);
                             p10 = glm::vec3(fixed, uu1, vv0);
                             p11 = glm::vec3(fixed, uu1, vv1);
                             p01 = glm::vec3(fixed, uu0, vv1);
-                        } else { // ¡ÀZ (x,y)
+                        } else { // ä¾§Z (x,y)
                             p00 = glm::vec3(uu0, vv0, fixed);
                             p10 = glm::vec3(uu1, vv0, fixed);
                             p11 = glm::vec3(uu1, vv1, fixed);
                             p01 = glm::vec3(uu0, vv1, fixed);
                         }
 
-                        // ²»ÔÙ×ö CPU ¶ËĞÎ±ä
+                        // è®¡ç®—çº¹ç†åæ ‡ï¼ˆç”¨äºè½¯ä½“å˜å½¢ï¼‰
                         auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                             float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                             float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
@@ -617,13 +854,13 @@ private:
                 }
             };
 
-            // ¶¥/µ×£ºaNormal = (0,0)
+            // é¡¶/åº•ï¼šaNormal = (0,0)
             emitFaceGrid(1, maxY, minX, maxX, minZ, maxZ, topColor,   glm::vec2(0.0f, 0.0f));
             emitFaceGrid(1, minY, minX, maxX, minZ, maxZ, bottomColor,glm::vec2(0.0f, 0.0f));
-            // ¡ÀX£ºaNormal = (¡À1,0)
+            // ä¾§Xï¼šaNormal = (Â±1,0)
             emitFaceGrid(0, minX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2(-1.0f, 0.0f));
             emitFaceGrid(0, maxX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2( 1.0f, 0.0f));
-            // ¡ÀZ£ºaNormal = (0,¡À1)
+            // ä¾§Zï¼šaNormal = (0,Â±1)
             emitFaceGrid(2, minZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f,-1.0f));
             emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f, 1.0f));
         };
@@ -651,6 +888,94 @@ private:
             appendBoxColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
         };
 
+        // åˆ¤å®šæŸå¢™æ ¼åˆ°å¤–éƒ¨çš„ç›´çº¿è·¯å¾„ä¸Šæ˜¯å¦å…¨ä¸ºå¢™ï¼Œç”¨äºè®©çª—æ´è´¯ç©¿åšå¢™
+        auto isWallCell = [&](int gx, int gy) -> bool {
+            if (gx < 0 || gx >= tileCount || gy < 0 || gy >= tileCount) return false;
+            return room.scene[gy][gx] == "#";
+        };
+        auto hasExteriorWallPath = [&](int gx, int gy) -> bool {
+            if (!isWallCell(gx, gy)) return false;
+            auto pathClear = [&](int dx, int dy, int max) -> bool {
+                int x = gx, y = gy, i = 0;
+                if(isWallCell(gx + dx, gx + dy) == isWallCell(gx - dx, gy - dy))return false;
+                while (x >= 0 && x < tileCount && y >= 0 && y < tileCount ) {
+                    if (!isWallCell(x, y)) return false;
+					if (i >= max) return false;
+                    if (x == 0 || x == tileCount - 1 || y == 0 || y == tileCount - 1) return true;
+                    x += dx;
+                    y += dy;
+                    i++;
+                }
+                return false;
+            };
+            return pathClear(-1, 0, 2) || pathClear(1, 0, 2) || pathClear(0, -1, 2) || pathClear(0, 1, 2);
+        };
+
+        // Pre-calculate window positions based on continuous wall segments
+        std::vector<std::vector<bool>> isCandidate(tileCount, std::vector<bool>(tileCount, false));
+
+        for (int y = 0; y < tileCount; ++y) {
+            for (int x = 0; x < tileCount; ++x) {
+                isCandidate[y][x] = hasExteriorWallPath(x, y);
+            }
+        }
+
+        // Horizontal scan
+        int start, end;
+        for (int y = 0; y < tileCount; y += tileCount - 1) {
+            start = -1, end = -1;
+            for (int x = 0; x <= tileCount; ++x) {
+                bool cand = (x < tileCount) && isCandidate[y][x];
+                if (cand && start == -1) {
+                    start = x;
+                    end = start;
+                } 
+                else if (cand) {
+                    end = x;
+                }
+                else if (!cand && start != -1 && end - start > 6) {
+                    for (int i = start + 2; i < end - 3; i++) {
+                        if (y == 0) {
+                            windowMap[y][i] = isCandidate[y + 1][i];
+                            windowMap[y + 1][i] = isCandidate[y + 1][i];
+                        }
+                        else {
+                            windowMap[y][i] = isCandidate[y - 1][i];
+                            windowMap[y - 1][i] = isCandidate[y - 1][i];
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // Vertical scan
+        for (int x = 0; x < tileCount; x += tileCount - 1) {
+            start = -1, end = -1;
+            for (int y = 0; y <= tileCount; ++y) {
+                bool cand = (y < tileCount) && isCandidate[y][x];
+                if (cand && start == -1) {
+                    start = y;
+                    end = y;
+                }
+                else if (cand) {
+                    end = y;
+                }
+                else if (!cand && start != -1 && end - start > 6) {
+                    for (int i = start + 2; i < end - 3; i++) {
+                        if (x == 0) {
+                            windowMap[i][x] = isCandidate[i][x + 1];
+                            windowMap[i][x + 1] = isCandidate[i][x + 1];
+                        }
+                        else {
+                            windowMap[i][x] = isCandidate[i][x - 1];
+                            windowMap[i][x - 1] = isCandidate[i][x - 1];
+                        }
+                    }
+                }
+            }
+        }
+
         auto drawPlayerAtCenter = [&](const glm::vec2& centerXZ, const glm::vec3& color, float height, float idleT) {
             const float inset = tileSize * 0.10f;
             const float halfW = (tileSize * 0.5f) - inset;
@@ -661,27 +986,48 @@ private:
             appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05f, idleT);
         };
 
-        // µØÃæ/Ç½Ìå
+        auto camera_in_wall = [&](float wallMinX, float wallMaxX, float wallMinZ, float wallMaxZ) {
+			float camZ = cameraPosition_.z, camX = cameraPosition_.x;
+			float camerayaw = cameraYaw_ >= 0 ? cameraYaw_ : cameraYaw_ + 360.0f;
+            if ( wallMinX <= camX && camX <= wallMaxX &&
+				wallMinZ <= camZ && camZ <= wallMaxZ) {
+                return true;
+            }
+            if (camerayaw <= 45.0f || camerayaw >= 315.0f) {
+                return ( wallMaxX <= camX ) || ( wallMinX - 1.0f <= camX );
+            } else if (camerayaw > 45.0f && camerayaw <= 135.0f) {
+                return ( wallMaxZ <= camZ ) || ( wallMinZ - 1.0f <= camZ );
+            } else if (camerayaw > 135.0f && camerayaw <= 225.0f) {
+                return (wallMinX >= camX) || (wallMaxX + 1.0f >= camX);
+            } else {
+                return (wallMinZ >= camZ) || (wallMaxZ + 1.0f >= camZ);
+			}
+		};
+
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
                 auto bounds = boundsForCell(x, y);
                 glm::vec3 baseColor = tileColorForCell(room.scene[y][x]);
                 appendFloor(bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
+                glm::vec3 camPos = cameraPosition_;
 
-                if (room.scene[y][x] == "#") {
-                    appendWallColumn(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                if (room.scene[y][x] == "#" && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
+                    if (windowMap[y][x]) {
+                        appendWindowWall(x, y, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                    } else {
+                        appendWallPart(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                    }
                 }
             }
         }
 
-        // ¼ÆËãÍæ¼Ò²åÖµ + ÉèÖÃÔË¶¯·½Ïò
+        // ç©å®¶å’Œç®±å­çš„ç»˜åˆ¶é€»è¾‘
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
             const Pos& e = next_state.player;
             glm::vec3 color(RGB_2_FLT(0xA6D6EA));
             float height = 0.90f;
 
-            // ´ı»ú¶¯»­Ê±¼ä£¨ÖÜÆÚÓÉ idleDuration_ ¿ØÖÆ£©
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
@@ -694,7 +1040,7 @@ private:
                 glm::vec2 dir = ce - cs;
                 if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
                 else dir = glm::vec2(0.0f);
-                moveDirection_ = dir; // ¹© softcubeShader_ Ê¹ÓÃ
+                moveDirection_ = dir;
 
                 glm::vec2 c = cs + (ce - cs) * moveT;
                 drawPlayerAtCenter(c, color, height, idleT);
@@ -709,7 +1055,6 @@ private:
             }
         };
 
-        // ¼ÆËãÏä×Ó²åÖµ£¨±£³Ö»ù´¡¼¸ºÎ£©
         auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color) {
             for (const auto& kv : boxes) {
                 int id = kv.first;
@@ -739,8 +1084,7 @@ private:
                         drawAtCenter(c, color, height);
                         continue;
                     }
-                } else {
-                    // Ä¿±ê×´Ì¬ÖĞ²»´æÔÚ¸ÃÏä×Ó£¨ÀıÈç±»´«ËÍ/ÏûÊ§£©£¬±£³Öµ±Ç°ÏÔÊ¾£¨·Ç¶¯»­£©
+                } else { 
                     if (s.room == roomId) {
                         glm::vec2 c = centerForCell(s.x, s.y);
                         drawAtCenter(c, color, height);
@@ -757,10 +1101,43 @@ private:
     }
 
     glm::vec3 tileColorForCell(const std::string& cell) const {
-        if (cell == "#") return glm::vec3(RGB_2_FLT(0xF4CFE9));
-        if (cell == "=") return glm::vec3(RGB_2_FLT(0xF4CFD6));
-        if (cell == "_") return glm::vec3(RGB_2_FLT(0xEDCFF4));
-        return glm::vec3(RGB_2_FLT(0xCFF4DA));
+        if (cell == "#") return {0.25f, 0.27f, 0.32f};
+        if (cell == "=") return {0.25f, 0.6f, 0.3f};
+        if (cell == "_") return {0.7f, 0.6f, 0.25f};
+        return {0.3f, 0.32f, 0.35f};
+    }
+
+    void pushVertex(const glm::vec3& pos, const glm::vec3& color) {
+        glm::vec3 normal = glm::normalize(pos - glm::vec3(0.0f, 0.0f, 0.0f));
+        if (glm::length(normal) < 0.01f) {
+            normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+        
+        vertexData_.push_back(pos.x);
+        vertexData_.push_back(pos.y);
+        vertexData_.push_back(pos.z);
+        vertexData_.push_back(normal.x);
+        vertexData_.push_back(normal.y);
+        vertexData_.push_back(normal.z);
+        vertexData_.push_back(color.r);
+        vertexData_.push_back(color.g);
+        vertexData_.push_back(color.b);
+    }
+    
+    void pushVertexWithNormal(const glm::vec3& pos, const glm::vec3& normal, const glm::vec3& color) {
+        pushVertexWithNormalTo(vertexData_, pos, normal, color);
+    }
+
+    void pushVertexWithNormalTo(std::vector<float>& buffer, const glm::vec3& pos, const glm::vec3& normal, const glm::vec3& color) {
+        buffer.push_back(pos.x);
+        buffer.push_back(pos.y);
+        buffer.push_back(pos.z);
+        buffer.push_back(normal.x);
+        buffer.push_back(normal.y);
+        buffer.push_back(normal.z);
+        buffer.push_back(color.r);
+        buffer.push_back(color.g);
+        buffer.push_back(color.b);
     }
 
     Input mapCameraRelativeInput(Input input) const {
@@ -809,12 +1186,13 @@ private:
         case LEFT:
         default:
             return chooseCardinal(-right);
-        }
+    }
     }
 
-    // GL ×ÊÔ´
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
+    std::unique_ptr<Shader> shader_;
+    std::unique_ptr<Shader> depthShader_;
     GLuint vaoSoft_ = 0;
     GLuint vboSoft_ = 0;
     std::unique_ptr<Shader> basicShader_;
@@ -822,6 +1200,9 @@ private:
     std::unique_ptr<Shader> skyboxShader_;
     std::unique_ptr<SkyBox> skybox_;
     GLuint fbo_ = 0;
+    GLuint depthMapFBO_ = 0;
+    GLuint depthMap_ = 0;
+    const unsigned int shadowMapResolution_ = 2048;
     std::vector<GLuint> roomTextures_;
     int textureWidth_ = 0;
     int textureHeight_ = 0;
@@ -830,42 +1211,46 @@ private:
     GLuint wallTex_ = 0;
     GLuint boxTex_ = 0;
 
-    // ¾ØÕóÓë´°¿Ú
     glm::mat4 projection_ = glm::mat4(1.0f);
     glm::mat4 view_ = glm::mat4(1.0f);
     int windowWidth_ = 0;
     int windowHeight_ = 0;
+    std::vector<float> vertexData_;
+    std::vector<float> skyVertexData_;
     std::vector<float> floorVertexData_;
     std::vector<float> wallVertexData_;
     std::vector<float> boxVertexData_;
     std::vector<float> softVertexData_;
     glm::vec2 moveDirection_{0.0f, 0.0f};
 
-    // 2.5D ÀëÉ¢Ïà»ú
-    float cameraYaw_ = 0.0f;                // 0 -> +X
-    float cameraPitch_ = -45.0f;            // ¹Ì¶¨¸©Ñö
+    float cameraYaw_ = 0.0f;
+    float cameraPitch_ = -45.0f;
     const float fixedPitch_ = -45.0f;
     float currentRoomHalfExtent_ = 5.0f;
+    glm::vec3 cameraPosition_{ 0.0f, 3.0f, 0.0f };
     glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f};
     glm::vec2 cameraForward2D_{1.0f, 0.0f};
     const float tileWorldSize_ = 1.0f;
-    const float wallHeight_ = 1.0f;
+    const float wallHeight_ = 5.0f;
     const float eyeHeightOffset_ = 3.0f;
     const bool hidePlayerMesh_ = false;
 
-    // Ğı×ª¶¯»­×´Ì¬
+    // æ‘„åƒæœºæ—‹è½¬çŠ¶æ€
     bool rotating_ = false;
     float rotateStartYaw_ = 0.0f;
     float rotateTargetYaw_ = 0.0f;
     float rotateDuration_ = 0.0f;
     float rotateStartTime_ = 0.0f;
 
-    // Î»ÒÆ¶¯»­×´Ì¬£¨Íæ¼Ò/Ïä×Ó£©
+    // ç§»åŠ¨åŠ¨ç”»çŠ¶æ€ï¼ˆåŠ é€Ÿ/å‡é€Ÿï¼‰
     bool moving_ = false;
     float moveDuration_ = 0.0f;
     float moveStartTime_ = 0.0f;
+    
+    // å…‰ç…§ç³»ç»Ÿ
+    std::unique_ptr<LabLightingSystem> lightingSystem_;
 
-    // ´ı»ú¶¯»­×´Ì¬£¨Íæ¼Ò£©
+    // å¾…æœºåŠ¨ç”»çŠ¶æ€ï¼ˆæ‘‡æ™ƒï¼‰
     float idleDuration_ = 3.0f;
 };
 
@@ -899,7 +1284,7 @@ public:
     void render(const GameState* state, const Level* level, const GameState* next_state = nullptr) {
         bool renderedScene = false;
         if (showGameScene_ && state && level) {
-            // Èİ´í£ºÈôÎ´Ìá¹© next_state£¬ÔòÊ¹ÓÃ state ×ÔÉí
+            // å¦‚æœæœªæä¾› next_stateï¼Œåˆ™ä½¿ç”¨ state æ¸²æŸ“
             const GameState& nextRef = next_state ? *next_state : *state;
             renderer_.render(*state, *level, nextRef);
             renderedScene = true;
@@ -931,24 +1316,24 @@ public:
         }
     }
 
-    // call from GLFW key callback: left/right arrows rotate camera 90¡ã and camera position updates next render
+    // call from GLFW key callback: left/right arrows rotate camera 90Â° and camera position updates next render
     void handleKey(int key) {
         if (!showGameScene_) return;
 
-        // ÈôÏà»úÕıÔÚĞı×ª£¬ºöÂÔĞÂµÄĞı×ªÊäÈë
+        // å¦‚æœæ­£åœ¨æ—‹è½¬ï¼Œåˆ™å¿½ç•¥æ–°çš„æ—‹è½¬è¯·æ±‚
         if (renderer_.isRotating()) return;
 
         if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true, 0.5);
         else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
     }
 
-    // ĞÂÔö£ºÓÉÓ¦ÓÃ²ãÆô¶¯Î»ÒÆ¶¯»­
+    // å¼€å§‹å“åº”ç§»åŠ¨åŠ¨ç”»
     void beginMoveAnimation(float duration) {
         if (!showGameScene_) return;
         renderer_.beginMoveAnimation(duration);
     }
 
-    // ĞÂÔö£º²éÑ¯Ïà»úÊÇ·ñ´¦ÓÚĞı×ªÖĞ£¨ÓÃÓÚÊäÈë¼ÓËø£©
+    // æŸ¥è¯¢æ‘„åƒæœºæ˜¯å¦æ­£åœ¨æ—‹è½¬ï¼ˆç”¨äºé˜»å¡è¾“å…¥ï¼‰
     bool isCameraRotating() const {
         return renderer_.isRotating();
     }

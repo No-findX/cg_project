@@ -50,6 +50,10 @@ private:
     GameState cachedNextState_{};
     bool hasCachedState_ = false;      // Whether cachedState_ currently holds a valid snapshot.
 
+    // 键盘去抖：记录上一帧的按键状态
+    bool lastKeyUPressed_ = false;
+    bool lastKeyIPressed_ = false;
+
     // 位移动画时序
     bool animatingMove_ = false;
     double moveAnimStart_ = 0.0;
@@ -200,12 +204,22 @@ void GameApplication::processInput() {
     }
 
     if (glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS) {
-        viewRotate = GLFW_KEY_U;
-        hasInput = true;
-    }
-    else if (glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS) {
-        viewRotate = GLFW_KEY_I;
-        hasInput = true;
+        if (!lastKeyUPressed_) { // 只在按下瞬间触发(边沿检测)
+            viewRotate = GLFW_KEY_U;
+            hasInput = true;
+        }
+        lastKeyUPressed_ = true;
+    } else {
+        lastKeyUPressed_ = false;
+        if (glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS) {
+            if (!lastKeyIPressed_) { // 只在按下瞬间触发(边沿检测)
+                viewRotate = GLFW_KEY_I;
+                hasInput = true;
+            }
+            lastKeyIPressed_ = true;
+        } else {
+            lastKeyIPressed_ = false;
+        }
     }
 
     if (!hasInput) {
