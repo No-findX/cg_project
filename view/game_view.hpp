@@ -1,4 +1,4 @@
-#ifndef GAME_VIEW_HPP
+ï»¿#ifndef GAME_VIEW_HPP
 #define GAME_VIEW_HPP
 
 #include <algorithm>
@@ -43,12 +43,12 @@ public:
         textureWidth_ = windowWidth_;
         textureHeight_ = windowHeight_;
 
-        // Ê¹ÓÃ·â×°µÄ Shader Àà´ÓÎÄ¼ş¼ÓÔØ
+        // ä½¿ç”¨å°è£…çš„ Shader ç±»ä»æ–‡ä»¶åŠ è½½
         basicShader_ = std::make_unique<Shader>("view/shader/basic.vert", "view/shader/basic.frag");
         softcubeShader_ = std::make_unique<Shader>("view/shader/softcube.vert", "view/shader/softcube.frag");
         portalSurfaceShader_ = std::make_unique<Shader>("view/shader/portalSurf.vert", "view/shader/portalSurf.frag");
 
-        // »ù´¡¼¸ºÎ£¨pos3 + color3£©
+        // åŸºç¡€å‡ ä½•ï¼ˆpos3 + color3ï¼‰
         glGenVertexArrays(1, &vao_);
         glGenBuffers(1, &vbo_);
         glBindVertexArray(vao_);
@@ -63,7 +63,7 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
 
-        // ÈíÌåÁ¢·½Ìå£¨pos3 + color3 + normal2 + tex3£©
+        // è½¯ä½“ç«‹æ–¹ä½“ï¼ˆpos3 + color3 + normal2 + tex3ï¼‰
         glGenVertexArrays(1, &vaoSoft_);
         glGenBuffers(1, &vboSoft_);
         glBindVertexArray(vaoSoft_);
@@ -92,11 +92,11 @@ public:
     void rotateCamera(float /*deltaX*/, float /*deltaY*/) {
     }
 
-    // Ğı×ªÊ±¾Ü¾øĞÂµÄĞı×ªÇëÇó£¬±ÜÃâ½Ç¶ÈÆ¯ÒÆ
+    // æ—‹è½¬æ—¶æ‹’ç»æ–°çš„æ—‹è½¬è¯·æ±‚ï¼Œé¿å…è§’åº¦æ¼‚ç§»
     void rotateCameraBy90(bool left, float rotationtime = 0.0) {
         const float step = left ? -90.0f : 90.0f;
 
-        // ÈôÕıÔÚĞı×ª£¬ÔòºöÂÔĞÂµÄĞı×ªÊäÈë£¨ÊäÈëËø¶¨£©
+        // è‹¥æ­£åœ¨æ—‹è½¬ï¼Œåˆ™å¿½ç•¥æ–°çš„æ—‹è½¬è¾“å…¥ï¼ˆè¾“å…¥é”å®šï¼‰
         if (rotating_) {
             return;
         }
@@ -120,9 +120,9 @@ public:
         }
     }
 
-    // ¿ªÊ¼Ò»´ÎÎ»ÒÆ¶¯»­£¨ÓÃÓÚÍæ¼Ò/Ïä×ÓÍÆ½ø£©
+    // å¼€å§‹ä¸€æ¬¡ä½ç§»åŠ¨ç”»ï¼ˆç”¨äºç©å®¶/ç®±å­æ¨è¿›ï¼‰
     void beginMoveAnimation(float duration, Input input) {
-        // Ëõ¶ÌÊ±³¤ÒÔÌáÉıÇá¿ì¸Ğ£¬Èôµ÷ÓÃÕßÌá¹©¸ü¶ÌÊ±³¤£¬¿É°´µ÷ÓÃÕßÖµ
+        // ç¼©çŸ­æ—¶é•¿ä»¥æå‡è½»å¿«æ„Ÿï¼Œè‹¥è°ƒç”¨è€…æä¾›æ›´çŸ­æ—¶é•¿ï¼Œå¯æŒ‰è°ƒç”¨è€…å€¼
         const float preferred = 0.3f;
         //moveDuration_ = std::min(duration > 0.0f ? duration : preferred, preferred);
         moveDuration_ = duration > 0.0f ? duration : preferred;
@@ -135,7 +135,7 @@ public:
         return mapCameraRelativeInput(input);
     }
 
-    // ²éÑ¯µ±Ç°ÊÇ·ñ´¦ÓÚÏà»úĞı×ªÖĞ£¨¹©ÊäÈë²ã¼ÓËø£©
+    // æŸ¥è¯¢å½“å‰æ˜¯å¦å¤„äºç›¸æœºæ—‹è½¬ä¸­ï¼ˆä¾›è¾“å…¥å±‚åŠ é”ï¼‰
     bool isRotating() const {
         return rotating_;
     }
@@ -144,7 +144,7 @@ public:
         if (!basicShader_) return;
         if (level.rooms.empty()) return;
 
-        // Ïà»úĞı×ª¶¯»­£¨Æ½»¬£©
+        // ç›¸æœºæ—‹è½¬åŠ¨ç”»ï¼ˆå¹³æ»‘ï¼‰
         if (rotating_) {
             const float now = static_cast<float>(glfwGetTime());
             float elapsed = now - rotateStartTime_;
@@ -161,7 +161,7 @@ public:
             }
         }
 
-        // Î»ÒÆ¶¯»­Ê±¼ä²ÎÊı£¨ÔÈ¼ÓËÙ-ÔÈËÙ-ÔÈ¼õËÙ£©
+        // ä½ç§»åŠ¨ç”»æ—¶é—´å‚æ•°ï¼ˆåŒ€åŠ é€Ÿ-åŒ€é€Ÿ-åŒ€å‡é€Ÿï¼‰
         float moveT = 1.0f;
         if (moving_) {
             const float now = static_cast<float>(glfwGetTime());
@@ -174,11 +174,11 @@ public:
                 if (u < 0.0f) u = 0.0f;
                 if (u > 1.0f) u = 1.0f;
 
-                // ËÙ¶ÈÌİĞÎ£ºÇ° 20% ¼ÓËÙ£¬ºó 20% ¼õËÙ£¬ÖĞ¼äÔÈËÙ
+                // é€Ÿåº¦æ¢¯å½¢ï¼šå‰ 20% åŠ é€Ÿï¼Œå 20% å‡é€Ÿï¼Œä¸­é—´åŒ€é€Ÿ
                 const float acc = 0.2f;
                 const float dec = 0.2f;
                 const float constv = 1.0f - acc - dec; // 0.6
-                // ¹éÒ»»¯×î´óËÙ¶È£¬Ê¹×ÜÎ»ÒÆÎª 1
+                // å½’ä¸€åŒ–æœ€å¤§é€Ÿåº¦ï¼Œä½¿æ€»ä½ç§»ä¸º 1
                 const float vmax = 1.0f / (constv + 0.5f * (acc + dec));
 
                 if (u <= acc) {
@@ -465,7 +465,7 @@ private:
         return viewMatrix;
     }
 
-    // ĞÂÔö£ºÖ§³Ö²åÖµäÖÈ¾£¬ÒÀ¾İ state Óë next_state ÒÔ¼° moveT
+    // æ–°å¢ï¼šæ”¯æŒæ’å€¼æ¸²æŸ“ï¼Œä¾æ® state ä¸ next_state ä»¥åŠ moveT
     // Now features model matrix (basicShader_), clip plane toggling and virtual view toggling
     // New: more clipping planes for passing-through-portal rendering
     void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT,
@@ -475,7 +475,7 @@ private:
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
-        moveDirection_ = glm::vec2(0.0f); // Ä¬ÈÏÎŞ·½Ïò£¨ÓÃÓÚ·ÇÒÆ¶¯»ò·Ç±¾·¿¼ä£©
+        moveDirection_ = glm::vec2(0.0f); // é»˜è®¤æ— æ–¹å‘ï¼ˆç”¨äºéç§»åŠ¨æˆ–éæœ¬æˆ¿é—´ï¼‰
 
         currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
 
@@ -503,7 +503,7 @@ private:
 
         glm::mat4 viewToUse = enableVirtualView ? virtualView : getCameraView(room, tileWorldSize_);
 
-        // »æÖÆ¾²Ì¬¼¸ºÎ£¨µØÃæ/Ç½/Ïä×Ó£©
+        // ç»˜åˆ¶é™æ€å‡ ä½•ï¼ˆåœ°é¢/å¢™/ç®±å­ï¼‰
         if (!vertexData_.empty()) {
             basicShader_->use();
             basicShader_->setMat4("model", glm::mat4(1.0f));
@@ -522,7 +522,7 @@ private:
             glBindVertexArray(0);
         }
 
-        // »æÖÆ½ÇÉ«£¨ÈíÌåÁ¢·½Ìå + ×ÅÉ«Æ÷ĞÎ±ä£©
+        // ç»˜åˆ¶è§’è‰²ï¼ˆè½¯ä½“ç«‹æ–¹ä½“ + ç€è‰²å™¨å½¢å˜ï¼‰
         // Only draw if player is not passing through portals
         if (!softVertexData_.empty() && softcubeShader_ && !(objThroughPortalData.exists && objThroughPortalData.isPlayer)) {
             softcubeShader_->use();
@@ -535,7 +535,7 @@ private:
             softcubeShader_->setVec4("clipPlane1", glm::vec4(0.0));
             softcubeShader_->setBool("enableClip1", false);
 
-            // ´ı»úÊ±¼ä£¨ÖÜÆÚ idleDuration_£©
+            // å¾…æœºæ—¶é—´ï¼ˆå‘¨æœŸ idleDuration_ï¼‰
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
@@ -608,7 +608,7 @@ private:
                 softcubeShader_->setVec4("clipPlane1", objThroughPortalData.portal->getPortalClippingPlane());
                 softcubeShader_->setBool("enableClip1", true);
 
-                // ´ı»úÊ±¼ä£¨ÖÜÆÚ idleDuration_£©
+                // å¾…æœºæ—¶é—´ï¼ˆå‘¨æœŸ idleDuration_ï¼‰
                 float idleT = 0.0f;
                 if (idleDuration_ > 1e-5f) {
                     float now = static_cast<float>(glfwGetTime());
@@ -690,7 +690,7 @@ private:
             pushVertex(v3, color, throughPortal);
         };
 
-        // ÈíÌåÁ¢·½Ìå£ºÀ©Õ¹²¼¾Ö push
+        // è½¯ä½“ç«‹æ–¹ä½“ï¼šæ‰©å±•å¸ƒå±€ push
         auto pushSoftVertex = [&](const glm::vec3& pos, const glm::vec3& color, const glm::vec2& n2, const glm::vec3& tex, bool throughPortal = false) {
             std::vector<float>& target = throughPortal ? objThroughPortalData.vertexData : softVertexData_;
             
@@ -709,7 +709,7 @@ private:
 
         auto pushSoftQuad = [&](const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, const glm::vec3& v3,
                                 const glm::vec3& color, const glm::vec2& n2, float cx, float cz, float halfW, bool throughPortal = false) {
-            // aTex.xy = Ïà¶ÔÖĞĞÄ¹éÒ»»¯Æ«ÒÆ£¬aTex.z = halfW
+            // aTex.xy = ç›¸å¯¹ä¸­å¿ƒå½’ä¸€åŒ–åç§»ï¼ŒaTex.z = halfW
             auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                 float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                 float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
@@ -750,7 +750,7 @@ private:
             pushQuad(bottom3, bottom0, top0, top3, sideColor, throughPortal);
         };
 
-        // CPU ¶ËÈíÌåÁ¢·½Ìå£º²»×ö´ı»úĞÎ±ä£¬Ö»Êä³öÏ¸·ÖÍø¸ñÓë aNormal/aTex
+        // CPU ç«¯è½¯ä½“ç«‹æ–¹ä½“ï¼šä¸åšå¾…æœºå½¢å˜ï¼Œåªè¾“å‡ºç»†åˆ†ç½‘æ ¼ä¸ aNormal/aTex
         auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
             const glm::vec3& color, float /*amp*/, float /*timeT*/, bool throughPortal = false) {
             const int RES = 16;
@@ -781,24 +781,24 @@ private:
                         float vv1 = v0 + (v1 - v0) * b1;
 
                         glm::vec3 p00, p10, p11, p01;
-                        if (axis == 1) { // ¶¥/µ× (x,z)
+                        if (axis == 1) { // é¡¶/åº• (x,z)
                             p00 = glm::vec3(uu0, fixed, vv0);
                             p10 = glm::vec3(uu1, fixed, vv0);
                             p11 = glm::vec3(uu1, fixed, vv1);
                             p01 = glm::vec3(uu0, fixed, vv1);
-                        } else if (axis == 0) { // ¡ÀX (y,z)
+                        } else if (axis == 0) { // Â±X (y,z)
                             p00 = glm::vec3(fixed, uu0, vv0);
                             p10 = glm::vec3(fixed, uu1, vv0);
                             p11 = glm::vec3(fixed, uu1, vv1);
                             p01 = glm::vec3(fixed, uu0, vv1);
-                        } else { // ¡ÀZ (x,y)
+                        } else { // Â±Z (x,y)
                             p00 = glm::vec3(uu0, vv0, fixed);
                             p10 = glm::vec3(uu1, vv0, fixed);
                             p11 = glm::vec3(uu1, vv1, fixed);
                             p01 = glm::vec3(uu0, vv1, fixed);
                         }
 
-                        // ²»ÔÙ×ö CPU ¶ËĞÎ±ä
+                        // ä¸å†åš CPU ç«¯å½¢å˜
                         auto makeTex = [&](const glm::vec3& p) -> glm::vec3 {
                             float xNorm = (halfW > 1e-6f) ? (p.x - cx) / halfW : 0.0f;
                             float zNorm = (halfW > 1e-6f) ? (p.z - cz) / halfW : 0.0f;
@@ -810,13 +810,13 @@ private:
                 }
             };
 
-            // ¶¥/µ×£ºaNormal = (0,0)
+            // é¡¶/åº•ï¼šaNormal = (0,0)
             emitFaceGrid(1, maxY, minX, maxX, minZ, maxZ, topColor,   glm::vec2(0.0f, 0.0f));
             emitFaceGrid(1, minY, minX, maxX, minZ, maxZ, bottomColor,glm::vec2(0.0f, 0.0f));
-            // ¡ÀX£ºaNormal = (¡À1,0)
+            // Â±Xï¼šaNormal = (Â±1,0)
             emitFaceGrid(0, minX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2(-1.0f, 0.0f));
             emitFaceGrid(0, maxX, minY, maxY, minZ, maxZ, sideColor,  glm::vec2( 1.0f, 0.0f));
-            // ¡ÀZ£ºaNormal = (0,¡À1)
+            // Â±Zï¼šaNormal = (0,Â±1)
             emitFaceGrid(2, minZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f,-1.0f));
             emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f, 1.0f));
         };
@@ -854,7 +854,7 @@ private:
             appendSoftCube(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color, 0.05f, idleT, throughPortal);
         };
 
-        // µØÃæ/Ç½Ìå
+        // åœ°é¢/å¢™ä½“
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
                 auto bounds = boundsForCell(x, y);
@@ -927,14 +927,14 @@ private:
             return target;
         };
 
-        // ¼ÆËãÍæ¼Ò²åÖµ + ÉèÖÃÔË¶¯·½Ïò
+        // è®¡ç®—ç©å®¶æ’å€¼ + è®¾ç½®è¿åŠ¨æ–¹å‘
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
             const Pos& e = next_state.player;
             glm::vec3 color(0.25f, 0.85f, 0.35f);
             float height = 0.90f;
 
-            // ´ı»ú¶¯»­Ê±¼ä£¨ÖÜÆÚÓÉ idleDuration_ ¿ØÖÆ£©
+            // å¾…æœºåŠ¨ç”»æ—¶é—´ï¼ˆå‘¨æœŸç”± idleDuration_ æ§åˆ¶ï¼‰
             float idleT = 0.0f;
             if (idleDuration_ > 1e-5f) {
                 float now = static_cast<float>(glfwGetTime());
@@ -963,7 +963,7 @@ private:
                 glm::vec2 dir = csNext - csNow;
                 if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
                 else dir = glm::vec2(0.0f);
-                moveDirection_ = dir; // ¹© softcubeShader_ Ê¹ÓÃ
+                moveDirection_ = dir; // ä¾› softcubeShader_ ä½¿ç”¨
 
                 drawPlayerAtCenter(cs, color, height, idleT, true);
 
@@ -988,7 +988,7 @@ private:
                     glm::vec2 dire = ceNext - ceNow;
                     if (glm::dot(dire, dire) > 1e-6f) dire = glm::normalize(dire);
                     else dire = glm::vec2(0.0f);
-                    moveDirectionEnd_ = dire; // ¹© softcubeShader_ Ê¹ÓÃ
+                    moveDirectionEnd_ = dire; // ä¾› softcubeShader_ ä½¿ç”¨
 
                     drawPlayerAtCenter(ce, color, height, idleT, true);
                 }
@@ -999,7 +999,7 @@ private:
                 glm::vec2 dir = ce - cs;
                 if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
                 else dir = glm::vec2(0.0f);
-                moveDirection_ = dir; // ¹© softcubeShader_ Ê¹ÓÃ
+                moveDirection_ = dir; // ä¾› softcubeShader_ ä½¿ç”¨
 
                 glm::vec2 c = cs + (ce - cs) * moveT;
                 drawPlayerAtCenter(c, color, height, idleT);
@@ -1016,7 +1016,7 @@ private:
             }
         };
 
-        // ¼ÆËãÏä×Ó²åÖµ£¨±£³Ö»ù´¡¼¸ºÎ£©
+        // è®¡ç®—ç®±å­æ’å€¼ï¼ˆä¿æŒåŸºç¡€å‡ ä½•ï¼‰
         auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color) {
             for (const auto& kv : boxes) {
                 int id = kv.first;
@@ -1084,7 +1084,7 @@ private:
                         drawAtCenter(c, color, height);
                     }
                 } else {
-                    // Ä¿±ê×´Ì¬ÖĞ²»´æÔÚ¸ÃÏä×Ó£¨ÀıÈç±»´«ËÍ/ÏûÊ§£©£¬±£³Öµ±Ç°ÏÔÊ¾£¨·Ç¶¯»­£©
+                    // ç›®æ ‡çŠ¶æ€ä¸­ä¸å­˜åœ¨è¯¥ç®±å­ï¼ˆä¾‹å¦‚è¢«ä¼ é€/æ¶ˆå¤±ï¼‰ï¼Œä¿æŒå½“å‰æ˜¾ç¤ºï¼ˆéåŠ¨ç”»ï¼‰
                     if (s.room == roomId) {
                         glm::vec2 c = centerForCell(s.x, s.y);
                         drawAtCenter(c, color, height);
@@ -1329,7 +1329,7 @@ private:
         }
     }
 
-    // GL ×ÊÔ´
+    // GL èµ„æº
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
     GLuint vaoSoft_ = 0;
@@ -1341,7 +1341,7 @@ private:
     int textureWidth_ = 0;
     int textureHeight_ = 0;
 
-    // ¾ØÕóÓë´°¿Ú
+    // çŸ©é˜µä¸çª—å£
     glm::mat4 projection_ = glm::mat4(1.0f);
     glm::mat4 view_ = glm::mat4(1.0f);
     int windowWidth_ = 0;
@@ -1352,9 +1352,9 @@ private:
     glm::vec2 moveDirection_{0.0f, 0.0f};
     glm::vec2 moveDirectionEnd_{ 0.0f, 0.0f };
 
-    // 2.5D ÀëÉ¢Ïà»ú
+    // 2.5D ç¦»æ•£ç›¸æœº
     float cameraYaw_ = 0.0f;                // 0 -> +X
-    float cameraPitch_ = -45.0f;            // ¹Ì¶¨¸©Ñö
+    float cameraPitch_ = -45.0f;            // å›ºå®šä¿¯ä»°
     const float fixedPitch_ = -45.0f;
     float currentRoomHalfExtent_ = 5.0f;
     glm::vec3 playerEyePosition_{0.0f, 0.02f, 0.0f};
@@ -1364,20 +1364,20 @@ private:
     const float eyeHeightOffset_ = 3.0f;
     const bool hidePlayerMesh_ = false;
 
-    // Ğı×ª¶¯»­×´Ì¬
+    // æ—‹è½¬åŠ¨ç”»çŠ¶æ€
     bool rotating_ = false;
     float rotateStartYaw_ = 0.0f;
     float rotateTargetYaw_ = 0.0f;
     float rotateDuration_ = 0.0f;
     float rotateStartTime_ = 0.0f;
 
-    // Î»ÒÆ¶¯»­×´Ì¬£¨Íæ¼Ò/Ïä×Ó£©
+    // ä½ç§»åŠ¨ç”»çŠ¶æ€ï¼ˆç©å®¶/ç®±å­ï¼‰
     bool moving_ = false;
     Input moveInput_ = UP;
     float moveDuration_ = 0.0f;
     float moveStartTime_ = 0.0f;
 
-    // ´ı»ú¶¯»­×´Ì¬£¨Íæ¼Ò£©
+    // å¾…æœºåŠ¨ç”»çŠ¶æ€ï¼ˆç©å®¶ï¼‰
     float idleDuration_ = 3.0f;
 
     // New: portals
@@ -1415,7 +1415,7 @@ public:
     void render(const GameState* state, const Level* level, const GameState* next_state = nullptr) {
         bool renderedScene = false;
         if (showGameScene_ && state && level) {
-            // Èİ´í£ºÈôÎ´Ìá¹© next_state£¬ÔòÊ¹ÓÃ state ×ÔÉí
+            // å®¹é”™ï¼šè‹¥æœªæä¾› next_stateï¼Œåˆ™ä½¿ç”¨ state è‡ªèº«
             const GameState& nextRef = next_state ? *next_state : *state;
             renderer_.render(*state, *level, nextRef);
             renderedScene = true;
@@ -1459,11 +1459,11 @@ public:
         }
     }
 
-    // call from GLFW key callback: left/right arrows rotate camera 90¡ã and camera position updates next render
+    // call from GLFW key callback: left/right arrows rotate camera 90Â° and camera position updates next render
     void handleKey(int key) {
         if (!showGameScene_) return;
 
-        // ÈôÏà»úÕıÔÚĞı×ª£¬ºöÂÔĞÂµÄĞı×ªÊäÈë
+        // è‹¥ç›¸æœºæ­£åœ¨æ—‹è½¬ï¼Œå¿½ç•¥æ–°çš„æ—‹è½¬è¾“å…¥
         if (renderer_.isRotating()) return;
 
         if (key == GLFW_KEY_U) renderer_.rotateCameraBy90(true, 0.5);
@@ -1476,13 +1476,13 @@ public:
         uiManager_.handleResize(width, height);
     }
 
-    // ĞÂÔö£ºÓÉÓ¦ÓÃ²ãÆô¶¯Î»ÒÆ¶¯»­
+    // æ–°å¢ï¼šç”±åº”ç”¨å±‚å¯åŠ¨ä½ç§»åŠ¨ç”»
     void beginMoveAnimation(float duration, Input input) {
         if (!showGameScene_) return;
         renderer_.beginMoveAnimation(duration, input);
     }
 
-    // ĞÂÔö£º²éÑ¯Ïà»úÊÇ·ñ´¦ÓÚĞı×ªÖĞ£¨ÓÃÓÚÊäÈë¼ÓËø£©
+    // æ–°å¢ï¼šæŸ¥è¯¢ç›¸æœºæ˜¯å¦å¤„äºæ—‹è½¬ä¸­ï¼ˆç”¨äºè¾“å…¥åŠ é”ï¼‰
     bool isCameraRotating() const {
         return renderer_.isRotating();
     }

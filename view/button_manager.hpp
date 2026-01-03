@@ -1,4 +1,4 @@
-#ifndef BUTTON_MANAGER_HPP
+ï»¿#ifndef BUTTON_MANAGER_HPP
 #define BUTTON_MANAGER_HPP
 
 #include "button.hpp"
@@ -266,15 +266,15 @@ private:
             return;
         }
 
-        // ¼ÆËãËõ·Å±ÈÀı£ºÎÒÃÇÏ£Íû×ÖÌå¸ß¶È´ó¸ÅÕ¼°´Å¥¸ß¶ÈµÄ 50%
-        float rawTextHeight = static_cast<float>(stb_easy_font_height(textPtr)); // Ô­Ê¼ÏñËØ¸ß¶È
-        float targetHeight = button.getSize().y * 0.5f; // Ä¿±ê¸ß¶ÈÎª°´Å¥¸ß¶ÈµÄÒ»°ë
-        float scale = targetHeight / std::max(rawTextHeight, 1.0f); // ¼ÆËãËõ·Å±¶Êı
+        // è®¡ç®—ç¼©æ”¾æ¯”ä¾‹ï¼šæˆ‘ä»¬å¸Œæœ›å­—ä½“é«˜åº¦å¤§æ¦‚å æŒ‰é’®é«˜åº¦çš„ 50%
+        float rawTextHeight = static_cast<float>(stb_easy_font_height(textPtr)); // åŸå§‹åƒç´ é«˜åº¦
+        float targetHeight = button.getSize().y * 0.5f; // ç›®æ ‡é«˜åº¦ä¸ºæŒ‰é’®é«˜åº¦çš„ä¸€åŠ
+        float scale = targetHeight / std::max(rawTextHeight, 1.0f); // è®¡ç®—ç¼©æ”¾å€æ•°
 
         /*float textWidth = static_cast<float>(stb_easy_font_width(textPtr));
         float textHeight = static_cast<float>(stb_easy_font_height(textPtr));*/
 
-        // »ùÓÚËõ·ÅºóµÄ¿í¸ß¼ÆËãÆ«ÒÆÁ¿ÒÔ¾ÓÖĞ
+        // åŸºäºç¼©æ”¾åçš„å®½é«˜è®¡ç®—åç§»é‡ä»¥å±…ä¸­
         float scaledTextWidth = static_cast<float>(stb_easy_font_width(textPtr)) * scale;
         float scaledTextHeight = rawTextHeight * scale;
 

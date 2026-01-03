@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #define GLM_ENABLE_EXPERIMENTAL
 
@@ -240,8 +240,8 @@ public:
 		);
 		glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
-		// ×¢Òâ£ºÖ»Òª Texture ID ºÍ RBO ID Ã»ÓĞ±ä£¬¾Í²»ĞèÒªÖØĞÂµ÷ÓÃ glFramebufferTexture2D »ò glFramebufferRenderbuffer
-		// FBO »á×Ô¶¯Á´½Óµ½ĞÂµÄÄÚ´æ´óĞ¡¡£
+		// æ³¨æ„ï¼šåªè¦ Texture ID å’Œ RBO ID æ²¡æœ‰å˜ï¼Œå°±ä¸éœ€è¦é‡æ–°è°ƒç”¨ glFramebufferTexture2D æˆ– glFramebufferRenderbuffer
+		// FBO ä¼šè‡ªåŠ¨é“¾æ¥åˆ°æ–°çš„å†…å­˜å¤§å°ã€‚
 	}
 
 	glm::mat4 getModelMatrix() {

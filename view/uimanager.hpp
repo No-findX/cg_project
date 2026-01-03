@@ -1,4 +1,4 @@
-#ifndef UIMANAGER_HPP
+﻿#ifndef UIMANAGER_HPP
 #define UIMANAGER_HPP
 
 #include "button_manager.hpp"
