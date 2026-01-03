@@ -63,9 +63,16 @@ private:
     std::vector<char> glyphBuffer; // Temporary buffer filled by stb_easy_font_print.
     std::vector<float> textVertices; // CPU-side vertex data before uploading to OpenGL.
 
+    // Current window size, for handling font scaling
+    int windowWidth_;
+    int windowHeight_;
+
 public:
     // Initialize all GL resources and create default shaders.
-    void init() {
+    void init(int windowWidth, int windowHeight) {
+        windowHeight_ = windowHeight;
+        windowWidth_ = windowWidth;
+        
         setupButtonGeometry();
         setupTextRendering();
         compileShaders();
@@ -115,9 +122,22 @@ public:
     }
 
     // Register a clickable button with position, size, label, and callback.
-    void addButton(float x, float y, float w, float h, const std::string& text,
+    // New: Now accepts relative coords (0.0 ~ 1.0)
+    void addButton(float relX, float relY, float relW, float relH, const std::string& text,
         std::function<void()> callback) {
-        buttons.emplace_back(x, y, w, h, text, glm::vec4(0.2f, 0.6f, 1.0f, 1.0f), callback);
+        buttons.emplace_back(relX, relY, relW, relH, windowWidth_, windowHeight_, text, glm::vec4(0.2f, 0.6f, 1.0f, 1.0f), callback);
+    }
+
+    void updateWindowSize(int w, int h) {
+        windowWidth_ = w;
+        windowHeight_ = h;
+
+        // Proj matrix is changed outside by UImanager
+
+        // Broadcast the window resize to all buttons
+        for (auto& button : buttons) {
+            button.updateLayout(w, h);
+        }
     }
 
     // Update hover state for all buttons.
@@ -246,12 +266,22 @@ private:
             return;
         }
 
-        float textWidth = static_cast<float>(stb_easy_font_width(textPtr));
-        float textHeight = static_cast<float>(stb_easy_font_height(textPtr));
+        // 计算缩放比例：我们希望字体高度大概占按钮高度的 50%
+        float rawTextHeight = static_cast<float>(stb_easy_font_height(textPtr)); // 原始像素高度
+        float targetHeight = button.getSize().y * 0.5f; // 目标高度为按钮高度的一半
+        float scale = targetHeight / std::max(rawTextHeight, 1.0f); // 计算缩放倍数
+
+        /*float textWidth = static_cast<float>(stb_easy_font_width(textPtr));
+        float textHeight = static_cast<float>(stb_easy_font_height(textPtr));*/
+
+        // 基于缩放后的宽高计算偏移量以居中
+        float scaledTextWidth = static_cast<float>(stb_easy_font_width(textPtr)) * scale;
+        float scaledTextHeight = rawTextHeight * scale;
+
         glm::vec2 pos = button.getPosition();
         glm::vec2 size = button.getSize();
-        float offsetX = pos.x + (size.x - textWidth) * 0.5f;
-        float offsetY = pos.y + (size.y - textHeight) * 0.5f;
+        float offsetX = pos.x + (size.x - scaledTextWidth) * 0.5f;
+        float offsetY = pos.y + (size.y - scaledTextHeight) * 0.5f;
 
         textVertices.clear();
         textVertices.reserve(static_cast<size_t>(quadCount) * 6 * 2);
@@ -264,9 +294,9 @@ private:
         };
 
         GlyphVertex* vertices = reinterpret_cast<GlyphVertex*>(glyphBuffer.data());
-        auto pushVertex = [this](float x, float y) {
-            textVertices.push_back(x);
-            textVertices.push_back(y);
+        auto pushVertex = [this, scale, offsetX, offsetY](float x, float y) {
+            textVertices.push_back(x* scale + offsetX);
+            textVertices.push_back(y* scale + offsetY);
         };
 
         for (int i = 0; i < quadCount; ++i) {
@@ -281,8 +311,8 @@ private:
         }
 
         for (size_t i = 0; i < textVertices.size(); i += 2) {
-            textVertices[i] += offsetX;
-            textVertices[i + 1] = offsetY + (textHeight - textVertices[i + 1]);
+            //textVertices[i] += offsetX;
+            textVertices[i + 1] = 2 * offsetY + (scaledTextHeight - textVertices[i + 1]);
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, textVBO);

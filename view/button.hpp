@@ -15,6 +15,9 @@
 class Button {
 private:
     float x, y, width, height;           // Axis-aligned bounds in screen coordinates.
+    
+    float relX, relY, relW, relH;        // Relative coordinates (0.0 ~ 1.0)
+    
     std::string text;                    // Label rendered on the button face.
     glm::vec4 color;                     // Base color when idle.
     glm::vec4 hoverColor;                // Color tint applied when hovered.
@@ -22,10 +25,27 @@ private:
     std::function<void()> onClick;       // Callback executed on left-click release.
 
 public:
-    Button(float x, float y, float w, float h, const std::string& text, const glm::vec4& color, std::function<void()> callback)
-        : x(x), y(y), width(w), height(h), text(text), color(color), onClick(callback), isHovered(false) {
+    Button(float rx, float ry, float rw, float rh, int screenW, int screenH,
+           const std::string& text, const glm::vec4& color, std::function<void()> callback)
+        : relX(rx), relY(ry), relW(rw), relH(rh), text(text), color(color), onClick(callback), isHovered(false)
+    {
         hoverColor = glm::vec4(color.r * 0.8f, color.g * 0.8f, color.b * 0.8f, color.a);
+        updateLayout(screenW, screenH); // Get abs coords on initialization.
     }
+
+    // New: call when resizing screen
+    void updateLayout(int screenW, int screenH) {
+        x = relX * screenW;
+        y = relY * screenH;
+        width = relW * screenW;
+        height = relH * screenH;
+    }
+
+    // helper to get raw x/y for text rendering
+    float getX() const { return x; }
+    float getY() const { return y; }
+    float getW() const { return width; }
+    float getH() const { return height; }
 
     // Returns true if the given UI coordinates fall inside the button rect.
     bool contains(float mouseX, float mouseY) {
