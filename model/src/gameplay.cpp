@@ -61,7 +61,7 @@ GameState GamePlay::getNextState()
 
 CellType GamePlay::getCellType(Pos pos)
 {
-    if (rooms[pos.room].scene[pos.y][pos.x] == "#") {
+    if (rooms[pos.room].scene[pos.y][pos.x] == "#" || rooms[pos.room].scene[pos.y][pos.x] == "|") {
         return WALL;
     }
 
