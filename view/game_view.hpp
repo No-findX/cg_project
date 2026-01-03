@@ -11,6 +11,8 @@
 #include <limits>
 #include <string>
 #include <memory>
+#include <fstream>
+#include <sstream>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -33,6 +35,14 @@ namespace detail {
 
 class GameRenderer {
 public:
+    struct RoomGeoCache {
+        std::vector<float> floor;
+        std::vector<float> wall;
+        std::vector<float> staticBox;
+        float halfExtent = 0.0f;
+        bool valid = false;
+    };
+
     // 初始化渲染器：设置窗口尺寸、加载 Shader、初始化光照系统、阴影资源、Skybox、VAO/VBO 等
     void init(int windowWidth, int windowHeight) {
         windowWidth_ = windowWidth;
@@ -122,6 +132,11 @@ public:
         glGenFramebuffers(1, &fbo_);
 
         updateProjection();
+
+        // 加载椅子模型
+        loadModel("resource/modern chair 11 obj.obj", rawChairData_);
+        
+        roomCaches_.clear();
     }
 
     // no-op: remove mouse-drag free rotation for 2.5D style
@@ -178,6 +193,8 @@ public:
         if (!basicShader_) return;
         if (level.rooms.empty()) return;
 
+        bool wasRotating = rotating_;
+
         // 更新摄像机旋转动画
         if (rotating_) {
             const float now = static_cast<float>(glfwGetTime());
@@ -196,6 +213,9 @@ public:
                 float delta = (rotateTargetYaw_ >= rotateStartYaw_) ? (90.0f) : (-90.0f);
                 cameraYaw_ = rotateStartYaw_ + delta * p;
             }
+
+            // 旋转时强制失效缓存，以便更新墙体遮挡逻辑
+            for (auto& c : roomCaches_) c.valid = false;
         }
 
         // 计算移动动画插值（加速-匀速-减速）
@@ -235,26 +255,33 @@ public:
             }
         }
 
-        ensureRoomTextures(level.rooms.size());
+        bool texturesChanged = ensureRoomTextures(level.rooms.size());
+        bool stateChanged = isStateChanged(state, lastState_);
+        bool roomChanged = (state.player.room != lastRoomId_);
+        bool needsUpdate = texturesChanged || stateChanged || roomChanged || moving_ || wasRotating;
 
-        for (size_t i = 0; i < level.rooms.size(); ++i) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, roomTextures_[i], 0);
-            GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
-            glDrawBuffers(1, drawBuffers);
+        if (needsUpdate) {
+            for (size_t i = 0; i < level.rooms.size(); ++i) {
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, roomTextures_[i], 0);
+                GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
+                glDrawBuffers(1, drawBuffers);
 
-            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-                std::cerr << "Framebuffer not complete for room " << i << std::endl;
+                if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                    std::cerr << "Framebuffer not complete for room " << i << std::endl;
+                }
+
+                glViewport(0, 0, textureWidth_, textureHeight_);
+                glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+
+                renderRoomIndex(static_cast<int>(i), state, level, next_state, moveT, true);
+
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
-
-            glViewport(0, 0, textureWidth_, textureHeight_);
-            glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-
-            renderRoomIndex(static_cast<int>(i), state, level, next_state, moveT);
-
-            glBindTexture(GL_TEXTURE_2D, 0);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            lastState_ = state;
+            lastRoomId_ = state.player.room;
         }
 
         if (state.player.room >= 0 && state.player.room < static_cast<int>(level.rooms.size())) {
@@ -262,7 +289,7 @@ public:
             glViewport(0, 0, windowWidth_, windowHeight_);
             glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
-            renderRoomIndex(state.player.room, state, level, next_state, moveT);
+            renderRoomIndex(state.player.room, state, level, next_state, moveT, needsUpdate);
         }
     }
 
@@ -355,13 +382,15 @@ private:
         return tex;
     }
 
-    void ensureRoomTextures(size_t count) {
+    bool ensureRoomTextures(size_t count) {
+        bool changed = false;
         if (textureWidth_ != windowWidth_ || textureHeight_ != windowHeight_) {
             textureWidth_ = windowWidth_;
             textureHeight_ = windowHeight_;
             if (!roomTextures_.empty()) {
                 glDeleteTextures(static_cast<GLsizei>(roomTextures_.size()), roomTextures_.data());
                 roomTextures_.clear();
+                changed = true;
             }
         }
 
@@ -376,7 +405,9 @@ private:
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glBindTexture(GL_TEXTURE_2D, 0);
             roomTextures_.push_back(tex);
+            changed = true;
         }
+        return changed;
     }
 
     void setupShadowResources() {
@@ -429,20 +460,14 @@ private:
         glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
     }
 
-    void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT) {
+    void renderRoomIndex(int roomId, const GameState& state, const Level& level, const GameState& next_state, float moveT, bool rebuild = true) {
         if (roomId < 0 || roomId >= static_cast<int>(level.rooms.size())) return;
         const Room& room = level.rooms[roomId];
         if (room.size <= 0) return;
 
-        vertexData_.clear();
-        skyVertexData_.clear();
-        floorVertexData_.clear();
-        wallVertexData_.clear();
-        boxVertexData_.clear();
-        softVertexData_.clear();
-        moveDirection_ = glm::vec2(0.0f); // 默认无方向（静止状态）
-
-        currentRoomHalfExtent_ = appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
+        // 1. 优先计算摄像机位置和 View 矩阵
+        // 确保在构建几何体（特别是墙体剔除）时使用当前房间对应的正确摄像机位置
+        currentRoomHalfExtent_ = room.size * tileWorldSize_ * 0.5f;
 
         glm::vec3 front;
         float yawRad = glm::radians(cameraYaw_);
@@ -463,9 +488,21 @@ private:
         glm::vec3 forwardXZ = glm::vec3(front.x, 0.0f, front.z);
         glm::vec3 offsetDir = glm::length(forwardXZ) < 1e-5f ? glm::vec3(-1.0f, 0.0f, 0.0f) : -glm::normalize(forwardXZ);
 
-        glm::vec3 cameraPos = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
-        cameraPosition_ = cameraPos;
-        view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        cameraPosition_ = roomCenter + offsetDir * currentRoomHalfExtent_ + glm::vec3(0.0f, 3.0f, 0.0f);
+        view_ = glm::lookAt(cameraPosition_, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        if (roomCaches_.size() < level.rooms.size()) {
+            roomCaches_.resize(level.rooms.size());
+        }
+        RoomGeoCache& cache = roomCaches_[roomId];
+
+        if (rebuild) {
+            boxVertexData_.clear();
+            softVertexData_.clear();
+            moveDirection_ = glm::vec2(0.0f); // 默认无方向（静止状态）
+
+            appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_, &cache);
+        }
 
         // 移除旧的 PBR/Shadow 渲染逻辑
         /*
@@ -501,8 +538,9 @@ private:
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 11));
             };
             
-            drawShadowBatch(floorVertexData_);
-            drawShadowBatch(wallVertexData_);
+            drawShadowBatch(cache.floor);
+            drawShadowBatch(cache.wall);
+            drawShadowBatch(cache.staticBox);
             drawShadowBatch(boxVertexData_);
             
             glCullFace(GL_BACK);
@@ -516,8 +554,8 @@ private:
         glClear(GL_DEPTH_BUFFER_BIT);
 
         // 2. Skybox Pass (天空盒渲染)
-        cameraPos = roomCenter + offsetDir * glm::vec3(1.25f, 1.25f, 1.25f) * currentRoomHalfExtent_ + glm::vec3(0.0f, 4.0f, 0.0f);
-        view_ = glm::lookAt(cameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 skyboxCameraPos = roomCenter + offsetDir * glm::vec3(1.25f, 1.25f, 1.25f) * currentRoomHalfExtent_ + glm::vec3(0.0f, 4.0f, 0.0f);
+        view_ = glm::lookAt(skyboxCameraPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
 
         if (skybox_ && skyboxShader_) {
             glDepthFunc(GL_LEQUAL);
@@ -551,7 +589,7 @@ private:
             shader_->setVec3("lightColor", mainLight.color);
             shader_->setFloat("lightIntensity", mainLight.intensity);
             shader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
-            shader_->setVec3("viewPos", cameraPos);
+            shader_->setVec3("viewPos", cameraPosition_);
 
             shader_->setFloat("metallic", 0.0f);
             shader_->setFloat("roughness", 0.5f);
@@ -580,8 +618,9 @@ private:
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(data.size() / 11));
             };
 
-            drawPBRBatch(floorVertexData_, tileTex_);
-            drawPBRBatch(wallVertexData_, wallTex_);
+            drawPBRBatch(cache.floor, tileTex_);
+            drawPBRBatch(cache.wall, wallTex_);
+            drawPBRBatch(cache.staticBox, boxTex_);
             drawPBRBatch(boxVertexData_, boxTex_);
             
             glUseProgram(0);
@@ -622,7 +661,7 @@ private:
             softcubeShader_->setVec3("lightColor", mainLight.color);
             softcubeShader_->setFloat("lightIntensity", mainLight.intensity);
             softcubeShader_->setVec3("ambientLight", lightingSystem_->getAmbientLight());
-            softcubeShader_->setVec3("viewPos", cameraPos);
+            softcubeShader_->setVec3("viewPos", cameraPosition_);
 
             softcubeShader_->setFloat("metallic", 0.0f);
             softcubeShader_->setFloat("roughness", 0.5f);
@@ -651,7 +690,7 @@ private:
         return cameraPosition_;
     }
 
-    float appendRoomGeometry(const Room& room, int roomId, const GameState& state, const GameState& next_state, float moveT, float tileSize) {
+    float appendRoomGeometry(const Room& room, int roomId, const GameState& state, const GameState& next_state, float moveT, float tileSize, RoomGeoCache* cache = nullptr) {
         const int tileCount = room.size;
         const float boardHalf = tileCount * tileSize * 0.5f;
 
@@ -718,15 +757,15 @@ private:
             pushSoftVertex(v3, color, n2, makeTex(v3));
         };
 
-        auto appendFloor = [&](float minX, float maxX, float minZ, float maxZ, const glm::vec3& color) {
+        auto appendFloor = [&](std::vector<float>& buf, float minX, float maxX, float minZ, float maxZ, const glm::vec3& color) {
             glm::vec3 v0(minX, 0.0f, minZ);
             glm::vec3 v1(maxX, 0.0f, minZ);
             glm::vec3 v2(maxX, 0.0f, maxZ);
             glm::vec3 v3(minX, 0.0f, maxZ);
-            pushQuad(floorVertexData_, v0, v3, v2, v1, color);
+            pushQuad(buf, v0, v3, v2, v1, color);
         };
 
-        auto appendWallPart = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+        auto appendWallPart = [&](std::vector<float>& buf, float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
             glm::vec3 topColor = color;
             glm::vec3 sideColor = color * 0.85f;
             glm::vec3 top0(minX, maxY, minZ);
@@ -734,21 +773,21 @@ private:
             glm::vec3 top2(maxX, maxY, maxZ);
             glm::vec3 top3(minX, maxY, maxZ);
             // 顶部面：原顺序导致法线朝下，改为逆时针(top0->top3->top2->top1)使其朝上
-            pushQuad(wallVertexData_, top0, top3, top2, top1, topColor);
+            pushQuad(buf, top0, top3, top2, top1, topColor);
 
             glm::vec3 bottom0(minX, minY, minZ);
             glm::vec3 bottom1(maxX, minY, minZ);
             glm::vec3 bottom2(maxX, minY, maxZ);
             glm::vec3 bottom3(minX, minY, maxZ);
             // 侧面1 (minZ)：原顺序法线朝内(+Z)，改为(bottom1->bottom0->top0->top1)使其朝外(-Z)
-            pushQuad(wallVertexData_, bottom1, bottom0, top0, top1, sideColor);
+            pushQuad(buf, bottom1, bottom0, top0, top1, sideColor);
             // 侧面2 (maxX)：原顺序法线朝内(-X)，改为(bottom2->bottom1->top1->top2)使其朝外(+X)
-            pushQuad(wallVertexData_, bottom2, bottom1, top1, top2, sideColor);
-            pushQuad(wallVertexData_, bottom3, bottom2, top2, top3, sideColor);
-            pushQuad(wallVertexData_, bottom0, bottom3, top3, top0, sideColor);
+            pushQuad(buf, bottom2, bottom1, top1, top2, sideColor);
+            pushQuad(buf, bottom3, bottom2, top2, top3, sideColor);
+            pushQuad(buf, bottom0, bottom3, top3, top0, sideColor);
         };
 
-        auto appendWindowWall = [&](int gx, int gy, float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+        auto appendWindowWall = [&](std::vector<float>& buf, int gx, int gy, float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
             float h = maxY - minY;
             float w = maxX - minX;
             float d = maxZ - minZ;
@@ -760,41 +799,84 @@ private:
             float pD = d * pillarRatio;
 
             // Bottom
-            appendWallPart(minX, maxX, minZ, maxZ, minY, winBottom, color);
+            appendWallPart(buf, minX, maxX, minZ, maxZ, minY, winBottom, color);
             // Top
-            appendWallPart(minX, maxX, minZ, maxZ, winTop, maxY, color);
+            appendWallPart(buf, minX, maxX, minZ, maxZ, winTop, maxY, color);
             
             // Pillars
             if((gx == 0 || (gx > 0 && windowMap[gy][gx - 1] != true)) && (gy == 0 || (gy > 0 && windowMap[gy - 1][gx] != true)))
-                appendWallPart(minX, minX + pW, minZ, minZ + pD, winBottom, winTop, color);
+                appendWallPart(buf, minX, minX + pW, minZ, minZ + pD, winBottom, winTop, color);
             if((gx == tileCount - 1 || (gx < tileCount - 1 && windowMap[gy][gx + 1] != true)) && (gy == 0 || (gy > 0 && windowMap[gy - 1][gx] != true)))
-                appendWallPart(maxX - pW, maxX, minZ, minZ + pD, winBottom, winTop, color);
+                appendWallPart(buf, maxX - pW, maxX, minZ, minZ + pD, winBottom, winTop, color);
             if((gx == 0 || (gx > 0 && windowMap[gy][gx - 1] != true)) && (gy == tileCount - 1 || (gy < tileCount - 1 && windowMap[gy + 1][gx] != true)))
-                appendWallPart(minX, minX + pW, maxZ - pD, maxZ, winBottom, winTop, color);
+                appendWallPart(buf, minX, minX + pW, maxZ - pD, maxZ, winBottom, winTop, color);
             if((gx == tileCount - 1 || (gx < tileCount - 1 && windowMap[gy][gx + 1] != true)) && (gy == tileCount - 1 || (gy < tileCount - 1 && windowMap[gy + 1][gx] != true)))
-                appendWallPart(maxX - pW, maxX, maxZ - pD, maxZ, winBottom, winTop, color);
+                appendWallPart(buf, maxX - pW, maxX, maxZ - pD, maxZ, winBottom, winTop, color);
         };
 
-        auto appendBoxColumn = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
+        auto appendBoxColumn = [&](std::vector<float>& buf, float minX, float maxX, float minZ, float maxZ, float minY, float maxY, const glm::vec3& color) {
             glm::vec3 topColor = color;
             glm::vec3 sideColor = color * 0.85f;
             glm::vec3 top0(minX, maxY, minZ);
             glm::vec3 top1(maxX, maxY, minZ);
             glm::vec3 top2(maxX, maxY, maxZ);
             glm::vec3 top3(minX, maxY, maxZ);
-            pushQuad(boxVertexData_, top0, top1, top2, top3, topColor);
+            pushQuad(buf, top0, top1, top2, top3, topColor);
 
             glm::vec3 bottom0(minX, minY, minZ);
             glm::vec3 bottom1(maxX, minY, minZ);
             glm::vec3 bottom2(maxX, minY, maxZ);
             glm::vec3 bottom3(minX, minY, maxZ);
-            pushQuad(boxVertexData_, bottom0, bottom1, top1, top0, sideColor);
-            pushQuad(boxVertexData_, bottom1, bottom2, top2, top1, sideColor);
-            pushQuad(boxVertexData_, bottom2, bottom3, top3, top2, sideColor);
-            pushQuad(boxVertexData_, bottom3, bottom0, top0, top3, sideColor);
+            pushQuad(buf, bottom0, bottom1, top1, top0, sideColor);
+            pushQuad(buf, bottom1, bottom2, top2, top1, sideColor);
+            pushQuad(buf, bottom2, bottom3, top3, top2, sideColor);
+            pushQuad(buf, bottom3, bottom0, top0, top3, sideColor);
         };
 
-        // CPU 生成软体网格：细分平面，只在细分顶点上设置 aNormal/aTex
+        auto boundsForCell = [&](int gridX, int gridY) {
+            float minX = -boardHalf + gridX * tileSize;
+            float maxX = minX + tileSize;
+            float maxZ = boardHalf - gridY * tileSize;
+            float minZ = maxZ - tileSize;
+            return std::array<float, 4>{minX, maxX, minZ, maxZ};
+        };
+
+        auto appendChair = [&](std::vector<float>& buf, int gx, int gy, const glm::vec3& color) {
+            if (rawChairData_.empty()) return;
+            auto bounds = boundsForCell(gx, gy);
+            float centerX = (bounds[0] + bounds[1]) * 0.5f;
+            float centerZ = (bounds[2] + bounds[3]) * 0.5f;
+            float bottomY = 0.0f;
+
+            for (size_t i = 0; i < rawChairData_.size(); i += 8) {
+                float x = rawChairData_[i];
+                float y = rawChairData_[i+1];
+                float z = rawChairData_[i+2];
+                
+                float nx = rawChairData_[i+3];
+                float ny = rawChairData_[i+4];
+                float nz = rawChairData_[i+5];
+                
+                float u = rawChairData_[i+6];
+                float v = rawChairData_[i+7];
+
+                buf.push_back(x + centerX);
+                buf.push_back(y + bottomY);
+                buf.push_back(z + centerZ);
+                
+                buf.push_back(nx);
+                buf.push_back(ny);
+                buf.push_back(nz);
+                
+                buf.push_back(color.r);
+                buf.push_back(color.g);
+                buf.push_back(color.b);
+                
+                buf.push_back(u);
+                buf.push_back(v);
+            }
+        };
+
         auto appendSoftCube = [&](float minX, float maxX, float minZ, float maxZ, float minY, float maxY, 
             const glm::vec3& color, float /*amp*/, float /*timeT*/) {
             const int RES = 16;
@@ -865,14 +947,6 @@ private:
             emitFaceGrid(2, maxZ, minX, maxX, minY, maxY, sideColor,  glm::vec2(0.0f, 1.0f));
         };
 
-        auto boundsForCell = [&](int gridX, int gridY) {
-            float minX = -boardHalf + gridX * tileSize;
-            float maxX = minX + tileSize;
-            float maxZ = boardHalf - gridY * tileSize;
-            float minZ = maxZ - tileSize;
-            return std::array<float, 4>{minX, maxX, minZ, maxZ};
-        };
-
         auto centerForCell = [&](int gridX, int gridY) -> glm::vec2 {
             auto b = boundsForCell(gridX, gridY);
             return glm::vec2((b[0] + b[1]) * 0.5f, (b[2] + b[3]) * 0.5f); // x, z
@@ -885,7 +959,7 @@ private:
             float maxX = centerXZ.x + halfW;
             float minZ = centerXZ.y - halfW;
             float maxZ = centerXZ.y + halfW;
-            appendBoxColumn(minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
+            appendBoxColumn(boxVertexData_, minX, maxX, minZ, maxZ, 0.02f, 0.02f + height, color);
         };
 
         // 判定某墙格到外部的直线路径上是否全为墙，用于让窗洞贯穿厚墙
@@ -1004,24 +1078,33 @@ private:
 			}
 		};
 
-        for (int y = 0; y < tileCount; ++y) {
-            for (int x = 0; x < tileCount; ++x) {
-                auto bounds = boundsForCell(x, y);
-                glm::vec3 baseColor = tileColorForCell(room.scene[y][x]);
-                appendFloor(bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
-                glm::vec3 camPos = cameraPosition_;
+        if (cache && !cache->valid) {
+            cache->floor.clear();
+            cache->wall.clear();
+            cache->staticBox.clear();
 
-                if (room.scene[y][x] == "#" && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
-                    if (windowMap[y][x]) {
-                        appendWindowWall(x, y, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
-                    } else {
-                        appendWallPart(bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+            for (int y = 0; y < tileCount; ++y) {
+                for (int x = 0; x < tileCount; ++x) {
+                    auto bounds = boundsForCell(x, y);
+                    glm::vec3 baseColor = tileColorForCell(room.scene[y][x]);
+                    appendFloor(cache->floor, bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
+                    glm::vec3 camPos = cameraPosition_;
+
+                    if (room.scene[y][x] == "#" && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
+                        if (windowMap[y][x]) {
+                            appendWindowWall(cache->wall, x, y, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                        } else {
+                            appendWallPart(cache->wall, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                        }
+                    } else if (room.scene[y][x] == "|") {
+                        appendChair(cache->staticBox, x, y, glm::vec3(RGB_2_FLT(0x8B5A2B)));
                     }
                 }
             }
+            cache->valid = true;
+            cache->halfExtent = boardHalf;
         }
 
-        // 玩家和箱子的绘制逻辑
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
             const Pos& e = next_state.player;
@@ -1140,6 +1223,120 @@ private:
         buffer.push_back(color.b);
     }
 
+    void loadModel(const std::string& path, std::vector<float>& outData) {
+        std::ifstream file(path);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open model file: " << path << std::endl;
+            return;
+        }
+
+        std::vector<glm::vec3> temp_pos;
+        std::vector<glm::vec3> temp_norm;
+        std::vector<glm::vec2> temp_tex;
+        
+        struct VertexIdx { int v, vt, vn; };
+        std::vector<VertexIdx> indices;
+
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::stringstream ss(line);
+            std::string type;
+            ss >> type;
+
+            if (type == "v") {
+                glm::vec3 p;
+                ss >> p.x >> p.y >> p.z;
+                temp_pos.push_back(p);
+            } else if (type == "vn") {
+                glm::vec3 n;
+                ss >> n.x >> n.y >> n.z;
+                temp_norm.push_back(n);
+            } else if (type == "vt") {
+                glm::vec2 t;
+                ss >> t.x >> t.y;
+                temp_tex.push_back(t);
+            } else if (type == "f") {
+                std::string vertexStr;
+                std::vector<VertexIdx> faceIndices;
+                while (ss >> vertexStr) {
+                    VertexIdx idx = {0, 0, 0};
+                    size_t firstSlash = vertexStr.find('/');
+                    size_t secondSlash = vertexStr.find('/', firstSlash + 1);
+                    
+                    idx.v = std::stoi(vertexStr.substr(0, firstSlash));
+                    
+                    if (firstSlash != std::string::npos) {
+                        if (secondSlash != std::string::npos) {
+                            if (secondSlash > firstSlash + 1) {
+                                idx.vt = std::stoi(vertexStr.substr(firstSlash + 1, secondSlash - firstSlash - 1));
+                            }
+                            idx.vn = std::stoi(vertexStr.substr(secondSlash + 1));
+                        } else {
+                            idx.vt = std::stoi(vertexStr.substr(firstSlash + 1));
+                        }
+                    }
+                    faceIndices.push_back(idx);
+                }
+                
+                if (faceIndices.size() >= 3) {
+                    for (size_t i = 1; i < faceIndices.size() - 1; ++i) {
+                        indices.push_back(faceIndices[0]);
+                        indices.push_back(faceIndices[i]);
+                        indices.push_back(faceIndices[i+1]);
+                    }
+                }
+            }
+        }
+
+        if (temp_pos.empty()) return;
+
+        glm::vec3 minPos(std::numeric_limits<float>::max());
+        glm::vec3 maxPos(std::numeric_limits<float>::lowest());
+        for (const auto& p : temp_pos) {
+            minPos = glm::min(minPos, p);
+            maxPos = glm::max(maxPos, p);
+        }
+
+        glm::vec3 center = (minPos + maxPos) * 0.5f;
+        glm::vec3 size = maxPos - minPos;
+        float maxDim = std::max(std::max(size.x, size.y), size.z);
+        float scale = 0.8f / maxDim; // Scale to fit in 0.8 unit box
+
+        glm::vec3 offset = -center;
+        offset.y = -minPos.y; // Align bottom to 0
+        offset.y -= (maxPos.y - minPos.y) * 0.5f; // Actually, let's center it vertically too? No, sit on floor.
+        // Wait, offset.y = -minPos.y means p.y + offset.y starts at 0.
+        // Then we scale.
+        
+        // Correct logic:
+        // 1. Translate so min.y is 0, and center.x/z is 0.
+        // 2. Scale.
+        
+        glm::vec3 translation;
+        translation.x = -center.x;
+        translation.y = -minPos.y;
+        translation.z = -center.z;
+
+        for (const auto& idx : indices) {
+            glm::vec3 p = temp_pos[idx.v - 1];
+            p += translation;
+            p *= scale;
+
+            glm::vec3 n = (idx.vn > 0 && idx.vn <= static_cast<int>(temp_norm.size())) ? temp_norm[idx.vn - 1] : glm::vec3(0, 1, 0);
+            glm::vec2 t = (idx.vt > 0 && idx.vt <= static_cast<int>(temp_tex.size())) ? temp_tex[idx.vt - 1] : glm::vec2(0, 0);
+
+            outData.push_back(p.x);
+            outData.push_back(p.y);
+            outData.push_back(p.z);
+            outData.push_back(n.x);
+            outData.push_back(n.y);
+            outData.push_back(n.z);
+            outData.push_back(t.x);
+            outData.push_back(t.y);
+        }
+    }
+
     Input mapCameraRelativeInput(Input input) const {
         glm::vec2 forward;
         {
@@ -1221,6 +1418,7 @@ private:
     std::vector<float> wallVertexData_;
     std::vector<float> boxVertexData_;
     std::vector<float> softVertexData_;
+    std::vector<float> rawChairData_;
     glm::vec2 moveDirection_{0.0f, 0.0f};
 
     float cameraYaw_ = 0.0f;
@@ -1252,6 +1450,18 @@ private:
 
     // 待机动画状态（摇晃）
     float idleDuration_ = 3.0f;
+
+    GameState lastState_;
+    int lastRoomId_ = -1;
+
+    bool isStateChanged(const GameState& a, const GameState& b) const {
+        if (!(a.player == b.player)) return true;
+        if (a.boxes != b.boxes) return true;
+        if (a.boxrooms != b.boxrooms) return true;
+        return false;
+    }
+
+    std::vector<RoomGeoCache> roomCaches_;
 };
 
 } // namespace detail
