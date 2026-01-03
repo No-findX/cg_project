@@ -1,4 +1,4 @@
-#ifndef UIMANAGER_HPP
+﻿#ifndef UIMANAGER_HPP
 #define UIMANAGER_HPP
 
 #include "button_manager.hpp"
@@ -23,15 +23,28 @@ public:
     void init(int windowWidth, int windowHeight) {
         this->windowWidth = windowWidth;
         this->windowHeight = windowHeight;
-        buttonManager.init();
+        buttonManager.init(windowWidth, windowHeight);
         setupUI();
 
         setupOrthographicProjection(windowWidth, windowHeight);
     }
 
+    // Handle resize: update stored scr params of portals and update projection matrix
+    void handleResize(int width, int height) {
+        // 1. Change member var.s
+        windowWidth = width;
+        windowHeight = height;
+
+        // 2. Update projection
+        setupOrthographicProjection(width, height);
+
+        // 3. Button manager resize
+        buttonManager.updateWindowSize(width, height);
+    }
+
     // Create the main menu buttons and wire high-level actions.
     void setupUI() {
-        buttonManager.addButton(100, 100, 200, 50, "Start Game", [this]() {
+        buttonManager.addButton(0.125, 0.166 * 3, 0.25, 0.083, "Start Game", [this]() {
             if (startGameCallback) {
                 startGameCallback();
             } else {
@@ -39,11 +52,11 @@ public:
             }
             });
 
-        buttonManager.addButton(100, 200, 200, 50, "Options", [this]() {
+        buttonManager.addButton(0.125, 0.166 * 2, 0.25, 0.083, "Options", [this]() {
             std::cout << "Options clicked!" << std::endl;
             });
 
-        buttonManager.addButton(100, 300, 200, 50, "Exit", [this]() {
+        buttonManager.addButton(0.125, 0.166 * 1, 0.25, 0.083, "Exit", [this]() {
             std::cout << "Exit clicked!" << std::endl;
             exit(0);
             });

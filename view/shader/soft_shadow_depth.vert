@@ -4,27 +4,15 @@ layout(location = 1) in vec3 aColor;
 layout(location = 2) in vec2 aNormal; // Normal within XZ plane (top/bottom are 0,0)
 layout(location = 3) in vec3 aTex;    // aTex.xy: relative offset from center [-1,1]; aTex.z: halfW (world units)
 
-uniform mat4 view;
-uniform mat4 projection;
 uniform mat4 lightSpaceMatrix;
 
 uniform vec2 direction; // Movement direction in XZ plane (unit vector or (0,0))
 uniform float moveT;    // 0..1
 uniform float idleT;    // 0..1
 
-// For portals
-uniform vec4 clipPlane0;
-uniform bool enableClip0;
-
 // For passing through portals
 uniform vec4 clipPlane1;
 uniform bool enableClip1;
-
-out vec3 FragPos;
-out vec3 Normal;
-out vec3 VertexColor;
-out vec4 FragPosLightSpace;
-out vec2 TexCoord;
 
 // Idle Squash & Stretch: radial expansion/contraction in XZ, inverse small scale in Y
 vec3 idlePos(vec3 p, vec3 tex, float t) {
@@ -108,23 +96,9 @@ void main() {
     // Then apply movement deformation (if moving)
     vec3 p = movingPos(pIdle, aNormal, aTex, direction, moveT);
 
-    FragPos = p;
-    
-    // Simple normal estimation: use aNormal for sides and default upwards for top / bottom
-    vec3 N = vec3(0.0, 1.0, 0.0);
-    if (length(aNormal) > 0.001) {
-        N = vec3(aNormal.x, 0.0, aNormal.y);
-    }
-    Normal = normalize(N);
-    
-    VertexColor = aColor;
-    TexCoord = vec2(0.0); // No TexCoord for soft cube yet
-    FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
-
-    gl_Position = projection * view * vec4(p, 1.0);
+    gl_Position = lightSpaceMatrix * vec4(p, 1.0);
 
     // Clipping for portals
     vec4 worldPos4dim = vec4(p, 1.0);
-    gl_ClipDistance[0] = enableClip0 ? dot(worldPos4dim, clipPlane0) : 1.0;
     gl_ClipDistance[1] = enableClip1 ? dot(worldPos4dim, clipPlane1) : 1.0;
 }

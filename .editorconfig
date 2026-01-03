@@ -7,3 +7,9 @@ end_of_line = crlf
 indent_style = space
 indent_size = 4
 insert_final_newline = true
+
+# 针对 OpenGL Shader 文件的特殊配置：必须使用标准的 UTF-8 (无 BOM)
+[*.{vert,frag}]
+charset = utf-8
+# 建议 Shader 也使用 LF 换行符，增加跨平台兼容性
+# end_of_line = lf

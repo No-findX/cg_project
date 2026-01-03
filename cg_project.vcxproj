@@ -187,6 +187,7 @@
   <ItemGroup>
     <ClInclude Include="model\include\gameplay.hpp" />
     <ClInclude Include="model\include\level_loader.hpp" />
+    <ClInclude Include="model\portal\portal.h" />
     <ClInclude Include="viewmodel\game_view_model.hpp" />
     <ClInclude Include="view\button.hpp" />
     <ClInclude Include="view\button_manager.hpp" />
@@ -199,10 +200,18 @@
     <None Include="model\levels\l1.json" />
     <None Include="view\shader\basic.frag" />
     <None Include="view\shader\basic.vert" />
+    <None Include="view\shader\pbr.frag" />
+    <None Include="view\shader\pbr.vert" />
+    <None Include="view\shader\portalSurf.frag" />
+    <None Include="view\shader\portalSurf.vert" />
+    <None Include="view\shader\shadow_depth.frag" />
+    <None Include="view\shader\shadow_depth.vert" />
     <None Include="view\shader\skybox.frag" />
     <None Include="view\shader\skybox.vert" />
     <None Include="view\shader\softcube.frag" />
     <None Include="view\shader\softcube.vert" />
+    <None Include="view\shader\soft_shadow_depth.frag" />
+    <None Include="view\shader\soft_shadow_depth.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
