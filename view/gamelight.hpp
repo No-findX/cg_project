@@ -1,22 +1,22 @@
-#ifndef GAMELIGHT_HPP
+ï»¿#ifndef GAMELIGHT_HPP
 #define GAMELIGHT_HPP
 
 #include <glm/glm.hpp>
 #include <vector>
 #include <string>
 
-/// @brief µã¹âÔ´½á¹¹Ìå
+/// @brief ç‚¹å…‰æºç»“æ„ä½“
 struct PointLight {
     glm::vec3 position;
     glm::vec3 color;
     float intensity;
-    float radius;  // ¹âÕÕ°ë¾¶
+    float radius;  // å…‰ç…§åŠå¾„
     
     PointLight(const glm::vec3& pos, const glm::vec3& col, float inten, float rad = 10.0f)
         : position(pos), color(col), intensity(inten), radius(rad) {}
 };
 
-/// @brief ·½Ïò¹â½á¹¹Ìå£¨ÓÃÓÚÖ÷¹âÔ´£©
+/// @brief æ–¹å‘å…‰ç»“æ„ä½“ï¼ˆç”¨äºä¸»å…‰æºï¼‰
 struct DirectionalLight {
     glm::vec3 direction;
     glm::vec3 color;
@@ -28,12 +28,12 @@ struct DirectionalLight {
         : direction(glm::normalize(dir)), color(col), intensity(inten) {}
 };
 
-/// @brief PBR²ÄÖÊ²ÎÊı
+/// @brief PBRæè´¨å‚æ•°
 struct PBRMaterial {
-    glm::vec3 albedo;      // »ù´¡ÑÕÉ«
-    float metallic;        // ½ğÊô¶È [0,1]
-    float roughness;       // ´Ö²Ú¶È [0,1]
-    float ao;              // »·¾³¹âÕÚ±Î [0,1]
+    glm::vec3 albedo;      // åŸºç¡€é¢œè‰²
+    float metallic;        // é‡‘å±åº¦ [0,1]
+    float roughness;       // ç²—ç³™åº¦ [0,1]
+    float ao;              // ç¯å¢ƒå…‰é®è”½ [0,1]
     
     PBRMaterial(const glm::vec3& alb = glm::vec3(1.0f), 
                 float metal = 0.0f, 
@@ -42,39 +42,39 @@ struct PBRMaterial {
         : albedo(alb), metallic(metal), roughness(rough), ao(ambOcc) {}
 };
 
-/// @brief ÊµÑéÊÒ¹âÕÕ¹ÜÀíÆ÷
+/// @brief å®éªŒå®¤å…‰ç…§ç®¡ç†å™¨
 class LabLightingSystem {
 public:
     LabLightingSystem() {
         setupDefaultLighting();
     }
     
-    /// @brief ÉèÖÃÄ¬ÈÏÊµÑéÊÒ¹âÕÕ£¨Ìì»¨°åµã¹âÔ´+»·¾³¹â£©
+    /// @brief è®¾ç½®é»˜è®¤å®éªŒå®¤å…‰ç…§ï¼ˆå¤©èŠ±æ¿ç‚¹å…‰æº+ç¯å¢ƒå…‰ï¼‰
     void setupDefaultLighting() {
-        // ¶¥²¿Å¯°×ÈÕ¹â£¨Ä£ÄâÇ¿ÁÒÑô¹â£¬É«ÎÂÔ¼5500K£©
+        // é¡¶éƒ¨æš–ç™½æ—¥å…‰ï¼ˆæ¨¡æ‹Ÿå¼ºçƒˆé˜³å…‰ï¼Œè‰²æ¸©çº¦5500Kï¼‰
         mainLight_ = DirectionalLight(
             glm::vec3(-0.5f, -1.0f, -0.4f),
-            glm::vec3(1.0f, 0.95f, 0.88f),  // Å¯°×¹â
-            2.0f                            // ½µµÍÇ¿¶È£¬±ÜÃâ¹ıÆØ
+            glm::vec3(1.0f, 0.95f, 0.88f),  // æš–ç™½å…‰
+            2.0f                            // é™ä½å¼ºåº¦ï¼Œé¿å…è¿‡æ›
         );
         
-        // »·¾³¹â¸ÄÎªÉîÀäÀ¶£¨Ä£ÄâÌì¿ÕÉ¢Éä£©£¬ÓëÖ÷¹âĞÎ³ÉÀäÅ¯¶Ô±È
+        // ç¯å¢ƒå…‰æ”¹ä¸ºæ·±å†·è“ï¼ˆæ¨¡æ‹Ÿå¤©ç©ºæ•£å°„ï¼‰ï¼Œä¸ä¸»å…‰å½¢æˆå†·æš–å¯¹æ¯”
         ambientColor_ = glm::vec3(0.2f, 0.25f, 0.4f);
-        ambientIntensity_ = 0.1f;          // ¼«µÍ»·¾³¹â£¬½Ó½ü´¿ºÚÒõÓ°
+        ambientIntensity_ = 0.1f;          // æä½ç¯å¢ƒå…‰ï¼Œæ¥è¿‘çº¯é»‘é˜´å½±
         
         pointLights_.clear();
         invalidateCache();
     }
     
-    /// @brief ÉèÖÃÌì»¨°åµÆ¹âÕóÁĞ£¨Íø¸ñ²¼¾Ö£©
-    /// @param roomSize ·¿¼ä³ß´ç£¨¸ñ×ÓÊı£©
-    /// @param ceilingHeight Ìì»¨°å¸ß¶È
-    /// @param tileSize µ¥¸ö¸ñ×ÓÊÀ½ç³ß´ç
+    /// @brief è®¾ç½®å¤©èŠ±æ¿ç¯å…‰é˜µåˆ—ï¼ˆç½‘æ ¼å¸ƒå±€ï¼‰
+    /// @param roomSize æˆ¿é—´å°ºå¯¸ï¼ˆæ ¼å­æ•°ï¼‰
+    /// @param ceilingHeight å¤©èŠ±æ¿é«˜åº¦
+    /// @param tileSize å•ä¸ªæ ¼å­ä¸–ç•Œå°ºå¯¸
     void setupCeilingLights(int roomSize, float ceilingHeight, float tileSize = 1.0f) {
         if (roomSize == cachedRoomSize_ &&
             ceilingHeight == cachedCeilingHeight_ &&
             tileSize == cachedTileSize_) {
-            return; // ²ÎÊıÎ´±ä»¯£¬ÑØÓÃÒÑÓĞµÆ¹â
+            return; // å‚æ•°æœªå˜åŒ–ï¼Œæ²¿ç”¨å·²æœ‰ç¯å…‰
         }
 
         cachedRoomSize_ = roomSize;
@@ -83,23 +83,23 @@ public:
 
         pointLights_.clear();
         
-        // ÊµÑéÊÒ¸ßÁÁÀä°×µÆ£¨É«ÎÂÔ¼6500K£©
+        // å®éªŒå®¤é«˜äº®å†·ç™½ç¯ï¼ˆè‰²æ¸©çº¦6500Kï¼‰
         const glm::vec3 labLightColor(0.92f, 0.96f, 1.0f);
-        const float lightIntensity = 1.0f;    // ¹Ø±Õµã¹âÔ´¸ÉÈÅ£¬È·±£ÒõÓ°´¿¾»
-        const float lightRadius = 12.0f;      // Ôö¼Ó¸²¸Ç·¶Î§
+        const float lightIntensity = 1.0f;    // å…³é—­ç‚¹å…‰æºå¹²æ‰°ï¼Œç¡®ä¿é˜´å½±çº¯å‡€
+        const float lightRadius = 12.0f;      // å¢åŠ è¦†ç›–èŒƒå›´
         
-        // ¼ÆËã·¿¼äÖĞĞÄºÍ°ë¾¶
+        // è®¡ç®—æˆ¿é—´ä¸­å¿ƒå’ŒåŠå¾„
         float boardHalf = roomSize * tileSize * 0.5f;
         
-        // Íø¸ñ²¼¾Ö£ºÃ¿2x2¸ñ×Ó·ÅÖÃÒ»ÕµµÆ£¨¿Éµ÷ÕûÃÜ¶È£©
-        int lightSpacing = 2;  // µÆ¼ä¾à£¨¸ñ×ÓÊı£©
+        // ç½‘æ ¼å¸ƒå±€ï¼šæ¯2x2æ ¼å­æ”¾ç½®ä¸€ç›ç¯ï¼ˆå¯è°ƒæ•´å¯†åº¦ï¼‰
+        int lightSpacing = 2;  // ç¯é—´è·ï¼ˆæ ¼å­æ•°ï¼‰
         int lightsPerRow = (roomSize / lightSpacing);
-        if (lightsPerRow < 2) lightsPerRow = 2;  // ÖÁÉÙ2x2ÕóÁĞ
+        if (lightsPerRow < 2) lightsPerRow = 2;  // è‡³å°‘2x2é˜µåˆ—
         
         float actualSpacing = (roomSize * tileSize) / static_cast<float>(lightsPerRow);
         float startOffset = -boardHalf + actualSpacing * 0.5f;
         
-        // Éú³ÉÍø¸ñµã¹âÔ´£¨ÏŞÖÆÔÚ4¸öÄÚ£©
+        // ç”Ÿæˆç½‘æ ¼ç‚¹å…‰æºï¼ˆé™åˆ¶åœ¨4ä¸ªå†…ï¼‰
         int maxLights = 4;
         int lightCount = 0;
         
@@ -108,7 +108,7 @@ public:
                 float x = startOffset + i * actualSpacing;
                 float z = startOffset + j * actualSpacing;
                 
-                // µÆ¹âÎ»ÖÃ£ºÂÔµÍÓÚÌì»¨°å£¨Ä£ÄâÇ¶ÈëÊ½µÆ£©
+                // ç¯å…‰ä½ç½®ï¼šç•¥ä½äºå¤©èŠ±æ¿ï¼ˆæ¨¡æ‹ŸåµŒå…¥å¼ç¯ï¼‰
                 glm::vec3 lightPos(x, ceilingHeight - 0.3f, z);
                 
                 pointLights_.emplace_back(lightPos, labLightColor, lightIntensity, lightRadius);
@@ -117,44 +117,44 @@ public:
         }
     }
     
-    /// @brief Ìí¼Óµã¹âÔ´£¨¿ÉÓÃÓÚÌØÊâĞ§¹û£©
+    /// @brief æ·»åŠ ç‚¹å…‰æºï¼ˆå¯ç”¨äºç‰¹æ®Šæ•ˆæœï¼‰
     void addPointLight(const PointLight& light) {
-        if (pointLights_.size() < 4) {  // ÏŞÖÆ×î¶à4¸öµã¹âÔ´
+        if (pointLights_.size() < 4) {  // é™åˆ¶æœ€å¤š4ä¸ªç‚¹å…‰æº
             pointLights_.push_back(light);
         }
     }
     
-    /// @brief Çå¿ÕËùÓĞµã¹âÔ´
+    /// @brief æ¸…ç©ºæ‰€æœ‰ç‚¹å…‰æº
     void clearPointLights() {
         pointLights_.clear();
         invalidateCache();
     }
     
-    /// @brief »ñÈ¡Ö÷¹âÔ´
+    /// @brief è·å–ä¸»å…‰æº
     const DirectionalLight& getMainLight() const { return mainLight_; }
     
-    /// @brief »ñÈ¡»·¾³¹â
+    /// @brief è·å–ç¯å¢ƒå…‰
     glm::vec3 getAmbientLight() const { return ambientColor_ * ambientIntensity_; }
     
-    /// @brief »ñÈ¡ËùÓĞµã¹âÔ´
+    /// @brief è·å–æ‰€æœ‰ç‚¹å…‰æº
     const std::vector<PointLight>& getPointLights() const { return pointLights_; }
     
-    /// @brief ´´½¨Ô¤Éè²ÄÖÊ
+    /// @brief åˆ›å»ºé¢„è®¾æè´¨
     static PBRMaterial createMaterial(const std::string& type, const glm::vec3& baseColor) {
         if (type == "plastic") {
-            // ËÜÁÏ£ºµÍ½ğÊô¶È£¬ÖĞµÈ´Ö²Ú¶È
+            // å¡‘æ–™ï¼šä½é‡‘å±åº¦ï¼Œä¸­ç­‰ç²—ç³™åº¦
             return PBRMaterial(baseColor, 0.0f, 0.5f, 1.0f);
         } else if (type == "metal") {
-            // ½ğÊô£º¸ß½ğÊô¶È£¬µÍ´Ö²Ú¶È
+            // é‡‘å±ï¼šé«˜é‡‘å±åº¦ï¼Œä½ç²—ç³™åº¦
             return PBRMaterial(baseColor, 0.9f, 0.2f, 1.0f);
         } else if (type == "ceramic") {
-            // ÌÕ´É£ºµÍ½ğÊô¶È£¬µÍ´Ö²Ú¶È
+            // é™¶ç“·ï¼šä½é‡‘å±åº¦ï¼Œä½ç²—ç³™åº¦
             return PBRMaterial(baseColor, 0.0f, 0.3f, 1.0f);
         } else if (type == "matte") {
-            // ÑÆ¹â£ºµÍ½ğÊô¶È£¬¸ß´Ö²Ú¶È
+            // å“‘å…‰ï¼šä½é‡‘å±åº¦ï¼Œé«˜ç²—ç³™åº¦
             return PBRMaterial(baseColor, 0.0f, 0.9f, 1.0f);
         }
-        // Ä¬ÈÏËÜÁÏ²ÄÖÊ
+        // é»˜è®¤å¡‘æ–™æè´¨
         return PBRMaterial(baseColor, 0.0f, 0.5f, 1.0f);
     }
     

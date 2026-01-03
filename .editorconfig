@@ -1,0 +1,9 @@
+﻿root = true
+
+[*]
+# 设置字符集为 utf-8-bom，这对 VS 处理中文最友好
+charset = utf-8-bom
+end_of_line = crlf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
