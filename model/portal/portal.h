@@ -31,6 +31,7 @@ public:
 	unsigned int fbo;
 	unsigned int texture;
 	unsigned int tempTexture;
+    unsigned int finalTexture;
 	unsigned int rbo;
 	int scrWidth;
 	int scrHeight;
@@ -192,6 +193,25 @@ public:
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+        // Create final texture to store the result of each recursive rendering
+        // Create temp texture for recursive rendering
+        glGenTextures(1, &finalTexture);
+        glBindTexture(GL_TEXTURE_2D, finalTexture);
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGB,
+            scrWidth,
+            scrHeight,
+            0,
+            GL_RGB,
+            GL_UNSIGNED_BYTE,
+            NULL
+        );
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
 		// Verify
 		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 			std::cout << "FBO ERROR\n";
@@ -227,10 +247,18 @@ public:
 			0, GL_RGB, GL_UNSIGNED_BYTE, NULL
 		);
 
+        // 5. Adjust final texture size
+        glBindTexture(GL_TEXTURE_2D, finalTexture);
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, GL_RGB,
+            newWidth, newHeight,
+            0, GL_RGB, GL_UNSIGNED_BYTE, NULL
+        );
+
 		// Unbind texture
 		glBindTexture(GL_TEXTURE_2D, 0);
 
-		// 5. Adjust RBO size
+		// 6. Adjust RBO size
 		glBindRenderbuffer(GL_RENDERBUFFER, rbo);
 		glRenderbufferStorage(
 			GL_RENDERBUFFER,
@@ -429,6 +457,17 @@ public:
 			// reverse order to flip normal
 			addQuad(wrapper, innerFront[ni], innerFront[i], innerBack[i], innerBack[ni]);
 		}
+
+        // Cover back of wrapper
+        float back[] = {
+            -innerHalfW, -innerHalfH, 0,		color.x, color.y, color.z,
+             innerHalfW, -innerHalfH, 0,		color.x, color.y, color.z,
+             innerHalfW,  innerHalfH, 0,		color.x, color.y, color.z,
+             innerHalfW,  innerHalfH, 0,		color.x, color.y, color.z,
+            -innerHalfW,  innerHalfH, 0,		color.x, color.y, color.z,
+            -innerHalfW, -innerHalfH, 0,		color.x, color.y, color.z,
+        };
+        wrapper.insert(wrapper.end(), std::begin(back), std::end(back));
 
 		// Upload portalVertices to portal VBO
 		glBindVertexArray(portalVAO_);

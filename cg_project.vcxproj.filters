@@ -27,6 +27,9 @@
     <ClCompile Include="glad.c">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="view\stb_image.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="model\include\gameplay.hpp">
@@ -56,6 +59,9 @@
     <ClInclude Include="model\portal\portal.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="view\skybox_loader.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="view\shader\basic.frag">
@@ -77,6 +83,30 @@
       <Filter>源文件</Filter>
     </None>
     <None Include="view\shader\portalSurf.vert">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\skybox.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\skybox.vert">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\pbr.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\pbr.vert">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\shadow_depth.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\shadow_depth.vert">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\soft_shadow_depth.frag">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="view\shader\soft_shadow_depth.vert">
       <Filter>源文件</Filter>
     </None>
   </ItemGroup>
