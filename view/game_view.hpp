@@ -318,8 +318,8 @@ public:
                 const Pos& endPos = end->second;
 
                 // 2. Get world coordinate of the portal at start & end
-                glm::vec3 startWorldPos = computePortalPosition(level.rooms[startPos.room], startPos.x, startPos.y, portal->relativePos, tileWorldSize_, 0.96f);
-                glm::vec3 endWorldPos = computePortalPosition(level.rooms[endPos.room], endPos.x, endPos.y, portal->relativePos, tileWorldSize_, 0.96f);
+                glm::vec3 startWorldPos = computePortalPosition(level.rooms[startPos.room], startPos.x, startPos.y, portal->relativePos, tileWorldSize_, portalHeight);
+                glm::vec3 endWorldPos = computePortalPosition(level.rooms[endPos.room], endPos.x, endPos.y, portal->relativePos, tileWorldSize_, portalHeight);
 
                 // 3. Calculate current pos (interpolation with moveT) and update portal position
                 if (startPos.room == state.player.room && 
@@ -451,11 +451,11 @@ public:
             return;
         }
 
-        glm::vec3 innerWorldPos = computePortalPosition(boxroom, innerPortalPos.x, innerPortalPos.y, relativePos, tileWorldSize_, 0.96f);
-        glm::vec3 outerWorldPos = computePortalPosition(outerRoom, outerPortalPos.x, outerPortalPos.y, relativePos, tileWorldSize_, 0.96f);
+        glm::vec3 innerWorldPos = computePortalPosition(boxroom, innerPortalPos.x, innerPortalPos.y, relativePos, tileWorldSize_, portalHeight);
+        glm::vec3 outerWorldPos = computePortalPosition(outerRoom, outerPortalPos.x, outerPortalPos.y, relativePos, tileWorldSize_, portalHeight);
 
-        Portal* portalOutside = new Portal(outerPortalPos, relativePos, boxroomID, windowHeight_, windowWidth_, outerWorldPos, outerNormal, 0.96f, tileWorldSize_ * 0.96f);
-        Portal* portalInBox = new Portal(innerPortalPos, relativePos, boxroomID, windowHeight_, windowWidth_, innerWorldPos, innerNormal, 0.96f, tileWorldSize_ * 0.96f);
+        Portal* portalOutside = new Portal(outerPortalPos, relativePos, boxroomID, windowHeight_, windowWidth_, outerWorldPos, outerNormal, portalHeight, tileWorldSize_ * 0.96f);
+        Portal* portalInBox = new Portal(innerPortalPos, relativePos, boxroomID, windowHeight_, windowWidth_, innerWorldPos, innerNormal, portalHeight, tileWorldSize_ * 0.96f);
         portalOutside->setPairPortal(portalInBox);
         portalInBox->setPairPortal(portalOutside);
         portalOutside->setVAOs();
@@ -650,7 +650,7 @@ private:
         glm::mat4 viewSkyboxToUse = enableVirtualView ? virtualSkyboxView : getCameraView(room, tileWorldSize_, 1.25f, 4.0f);
 
         moveDirection_ = glm::vec2(0.0f); // 默认无方向（用于非移动或非本房间）
-        appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_);
+        appendRoomGeometry(room, roomId, state, next_state, moveT, tileWorldSize_, enableVirtualView);
         
         glm::vec3 roomCenter = glm::vec3(0.0f, 0.02f, 0.0f);
         glm::mat4 model = glm::mat4(1.0f);
@@ -1557,37 +1557,44 @@ private:
             }
 
             if (isPassingThroughPortal(s, e)) {
+                Portal* sPortal = getPassingThroughPortal(s);
+
                 // Store relevant info
                 objThroughPortalData.exists = true;
                 objThroughPortalData.isPlayer = true;
-                objThroughPortalData.portal = getPassingThroughPortal(s);
+                objThroughPortalData.portal = (s.room == roomId) ? sPortal : sPortal->pairPortal;
 
-                // Calculate "supposedly" position and draw the box
-                int dx = 0, dy = 0;
-                switch (moveInput_) {
-                    case UP: dy = -1; break;
-                    case DOWN: dy = 1; break;
-                    case LEFT: dx = -1; break;
-                    case RIGHT: dx = 1; break;
-                }
-
-                glm::vec2 csNow = centerForCell(s.x, s.y);
-                glm::vec2 csNext = centerForCell(s.x + dx, s.y + dy);
-                glm::vec2 cs = csNow + (csNext - csNow) * moveT;
-
-                glm::vec2 dir = csNext - csNow;
-                if (glm::dot(dir, dir) > 1e-6f) dir = glm::normalize(dir);
-                else dir = glm::vec2(0.0f);
-                moveDirection_ = dir; // 供 softcubeShader_ 使用
-
-                drawPlayerAtCenter(cs, color, height, idleT, true);
-
-                // If the player is being teleported to the same room, draw twice
+                // If the box is being teleported to the same room, draw twice
+                        // The render function will handle drawing the two obj.s
                 if (s.room == e.room) {
                     objThroughPortalData.renderTwice = true;
+                }
 
-                    // Calculate "supposedly" position before exiting pairPortal and draw the box
-                    // The render function will handle drawing the two obj.s
+                if (s.room == roomId) {
+                    // Calculate "supposedly" position and draw the box
+                    int dxs = 0, dys = 0;
+                    switch (moveInput_) {
+                    case UP: dys = -1; break;
+                    case DOWN: dys = 1; break;
+                    case LEFT: dxs = -1; break;
+                    case RIGHT: dxs = 1; break;
+                    }
+
+                    glm::vec2 csNow = centerForCell(s.x, s.y);
+                    glm::vec2 csNext = centerForCell(s.x + dxs, s.y + dys);
+                    glm::vec2 cs = csNow + (csNext - csNow) * moveT;
+
+                    glm::vec2 dirs = csNext - csNow;
+                    if (glm::dot(dirs, dirs) > 1e-6f) dirs = glm::normalize(dirs);
+                    else dirs = glm::vec2(0.0f);
+                    moveDirection_ = dirs; // 供 softcubeShader_ 使用
+
+                    drawPlayerAtCenter(cs, color, height, idleT, true);
+                }
+
+                // If the player is being teleported to the same room, draw twice
+                if (e.room == roomId) {
+                    // Calculate "supposedly" position before exiting pairPortal (of sPortal) and draw the box
                     int dxe = 0, dye = 0;
                     switch (objThroughPortalData.portal->pairPortal->relativePos) {
                         case XPos: dxe = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
@@ -1603,7 +1610,14 @@ private:
                     glm::vec2 dire = ceNext - ceNow;
                     if (glm::dot(dire, dire) > 1e-6f) dire = glm::normalize(dire);
                     else dire = glm::vec2(0.0f);
-                    moveDirectionEnd_ = dire; // 供 softcubeShader_ 使用
+
+                    if (objThroughPortalData.renderTwice) {
+                        moveDirectionEnd_ = dire; // 供 softcubeShader_ 使用
+                    }
+                    else {
+                        // Only rendered once, use moveDirection_
+                        moveDirection_ = dire; // 供 softcubeShader_ 使用
+                    }
 
                     drawPlayerAtCenter(ce, color, height, idleT, true);
                 }
@@ -1632,49 +1646,55 @@ private:
         };
 
         // 计算箱子插值（保持基础几何）
-        auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color) {
+        auto drawBoxes = [&](std::map<int, Pos> boxes, std::map<int, Pos> next_boxes, glm::vec3 color, bool isBoxroom = false) {
             for (const auto& kv : boxes) {
                 int id = kv.first;
                 const Pos& s = kv.second;
-                float height = 0.96f;
+                float height = isBoxroom ? portalHeight : 0.96f;
 
                 auto it = next_boxes.find(id);
                 if (it != next_boxes.end()) {
                     const Pos& e = it->second;
 
                     if (isPassingThroughPortal(s, e)) {
+                        Portal* sPortal = getPassingThroughPortal(s);
+
                         // Store relevant info
                         objThroughPortalData.exists = true;
                         objThroughPortalData.isPlayer = false;
-                        objThroughPortalData.portal = getPassingThroughPortal(s);
+                        objThroughPortalData.portal = (s.room == roomId) ? sPortal : sPortal->pairPortal;
                         
-                        // Calculate "supposedly" position and draw the box
-                        int dx = 0, dy = 0;
-                        switch (moveInput_) {
-                            case UP: dy = -1; break;
-                            case DOWN: dy = 1; break;
-                            case LEFT: dx = -1; break;
-                            case RIGHT: dx = 1; break;
-                        }
-
-                        glm::vec2 csNow = centerForCell(s.x, s.y);
-                        glm::vec2 csNext = centerForCell(s.x + dx, s.y + dy);
-                        glm::vec2 cs = csNow + (csNext - csNow) * moveT;
-
-                        drawAtCenter(cs, color, height, true);
-
                         // If the box is being teleported to the same room, draw twice
+                        // The render function will handle drawing the two obj.s
                         if (s.room == e.room) {
                             objThroughPortalData.renderTwice = true;
+                        }
 
-                            // Calculate "supposedly" position before exiting pairPortal and draw the box
-                            // The render function will handle drawing the two obj.s
+                        if (s.room == roomId) {
+                            // Calculate "supposedly" position and draw the box
+                            int dxs = 0, dys = 0;
+                            switch (moveInput_) {
+                            case UP: dys = -1; break;
+                            case DOWN: dys = 1; break;
+                            case LEFT: dxs = -1; break;
+                            case RIGHT: dxs = 1; break;
+                            }
+
+                            glm::vec2 csNow = centerForCell(s.x, s.y);
+                            glm::vec2 csNext = centerForCell(s.x + dxs, s.y + dys);
+                            glm::vec2 cs = csNow + (csNext - csNow) * moveT;
+
+                            drawAtCenter(cs, color, height, true);
+                        }
+
+                        if (e.room == roomId) {
+                            // Calculate "supposedly" position before exiting pairPortal (of sPortal) and draw the box
                             int dxe = 0, dye = 0;
                             switch (objThroughPortalData.portal->pairPortal->relativePos) {
-                                case XPos: dxe = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
-                                case XNeg: dxe = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
-                                case ZPos: dye = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
-                                case ZNeg: dye = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
+                                case XPos: dxe = sPortal->pairPortal->stationary ? 1 : -1; break;
+                                case XNeg: dxe = sPortal->pairPortal->stationary ? -1 : 1; break;
+                                case ZPos: dye = sPortal->pairPortal->stationary ? -1 : 1; break;
+                                case ZNeg: dye = sPortal->pairPortal->stationary ? 1 : -1; break;
                             }
 
                             glm::vec2 ceNow = centerForCell(e.x + dxe, e.y + dye);
@@ -1709,7 +1729,7 @@ private:
         };
 
         drawBoxes(state.boxes, next_state.boxes, glm::vec3(RGB_2_FLT(0xCFD6F4)));
-        drawBoxes(state.boxrooms, next_state.boxrooms, glm::vec3(RGB_2_FLT(0xCFF4ED)));
+        drawBoxes(state.boxrooms, next_state.boxrooms, glm::vec3(RGB_2_FLT(0xCFF4ED)), true);
         drawPlayer();
 
         return boardHalf;
@@ -2167,6 +2187,9 @@ private:
     
     // Color for chair
     glm::vec3 chairColor = glm::vec3(RGB_2_FLT(0x8B5A2B));
+
+    // Height of portal
+    float portalHeight = 2.0f;
 
     // 2.5D 离散相机
     float cameraYaw_ = 0.0f;                // 0 -> +X

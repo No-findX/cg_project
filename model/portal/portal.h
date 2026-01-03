@@ -350,7 +350,7 @@ public:
 		glBindVertexArray(0);
 	}
 
-	void setVAOs(glm::vec3 color = glm::vec3(0.0f, 0.0f, 0.0f), float thickness = 0.1f) {
+	void setVAOs(glm::vec3 color = glm::vec3(0.0f, 0.0f, 0.0f), float thickness = 0.03f) {
 		// Build wrapper (frame) vertices programmatically. The frame is the outer rectangle minus an inner rectangle
 		// Outer rectangle extents
 		float halfW = width / 2.0f;
@@ -457,17 +457,6 @@ public:
 			// reverse order to flip normal
 			addQuad(wrapper, innerFront[ni], innerFront[i], innerBack[i], innerBack[ni]);
 		}
-
-        // Cover back of wrapper
-        float back[] = {
-            -innerHalfW, -innerHalfH, 0,		color.x, color.y, color.z,
-             innerHalfW, -innerHalfH, 0,		color.x, color.y, color.z,
-             innerHalfW,  innerHalfH, 0,		color.x, color.y, color.z,
-             innerHalfW,  innerHalfH, 0,		color.x, color.y, color.z,
-            -innerHalfW,  innerHalfH, 0,		color.x, color.y, color.z,
-            -innerHalfW, -innerHalfH, 0,		color.x, color.y, color.z,
-        };
-        wrapper.insert(wrapper.end(), std::begin(back), std::end(back));
 
 		// Upload portalVertices to portal VBO
 		glBindVertexArray(portalVAO_);
