@@ -1,14 +1,14 @@
-#version 330 core
+ï»¿#version 330 core
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aColor;
-layout(location = 2) in vec2 aNormal; // XZ Æ½ÃæÄÚµÄÃæ·¨Ïß£¨¶¥/µ×Îª 0,0£©
-layout(location = 3) in vec3 aTex;    // aTex.xy: Ïà¶ÔÖĞĞÄÆ«ÒÆ[-1,1]£»aTex.z: halfW(ÊÀ½çµ¥Î»)
+layout(location = 2) in vec2 aNormal; // XZ å¹³é¢å†…çš„é¢æ³•çº¿ï¼ˆé¡¶/åº•ä¸º 0,0ï¼‰
+layout(location = 3) in vec3 aTex;    // aTex.xy: ç›¸å¯¹ä¸­å¿ƒåç§»[-1,1]ï¼›aTex.z: halfW(ä¸–ç•Œå•ä½)
 
 uniform mat4 view;
 uniform mat4 projection;
 uniform mat4 lightSpaceMatrix;
 
-uniform vec2 direction; // XZ ÔË¶¯·½Ïò£¨µ¥Î»ÏòÁ¿»ò(0,0)£©
+uniform vec2 direction; // XZ è¿åŠ¨æ–¹å‘ï¼ˆå•ä½å‘é‡æˆ–(0,0)ï¼‰
 uniform float moveT;    // 0..1
 uniform float idleT;    // 0..1
 
@@ -18,55 +18,55 @@ out vec3 VertexColor;
 out vec4 FragPosLightSpace;
 out vec2 TexCoord;
 
-// ´ı»ú Squash & Stretch£ºXZ ¾¶ÏòÅòÕÍ/ÊÕËõ£¬Y ·´ÏòÎ¢Ëõ·Å
+// å¾…æœº Squash & Stretchï¼šXZ å¾„å‘è†¨èƒ€/æ”¶ç¼©ï¼ŒY åå‘å¾®ç¼©æ”¾
 vec3 idlePos(vec3 p, vec3 tex, float t) {
-    // ÏàÎ»£ºsin(2¦Ğt)
+    // ç›¸ä½ï¼šsin(2Ï€t)
     const float TWO_PI = 6.28318530718;
     float phase = sin(TWO_PI * t);
 
-    // Õñ·ù£¨¿ÉÓëÃÀÊõµ÷²ÎÒ»ÖÂ£©
-    const float amp = 0.05;    // ºáÏòÅòÕÍÇ¿¶È
-    const float yRatio = 0.5;  // Y Ëõ·ÅÏà¶ÔÇ¿¶È
+    // æŒ¯å¹…ï¼ˆå¯ä¸ç¾æœ¯è°ƒå‚ä¸€è‡´ï¼‰
+    const float amp = 0.05;    // æ¨ªå‘è†¨èƒ€å¼ºåº¦
+    const float yRatio = 0.5;  // Y ç¼©æ”¾ç›¸å¯¹å¼ºåº¦
 
     float halfW = tex.z;
     if (halfW < 1e-6) return p;
 
-    // ¶¥µãµÄÖĞĞÄ×ø±ê£¨Í¨¹ı aTex.xy ºÍµ±Ç° aPos.xz ÖØ½¨£©
-    vec2 rel = tex.xy * halfW;   // ¶¥µãÏà¶ÔÖĞĞÄµÄ XZ Æ«ÒÆ
-    vec2 centerXZ = p.xz - rel;  // ÍÆ»ØÖĞĞÄ
+    // é¡¶ç‚¹çš„ä¸­å¿ƒåæ ‡ï¼ˆé€šè¿‡ aTex.xy å’Œå½“å‰ aPos.xz é‡å»ºï¼‰
+    vec2 rel = tex.xy * halfW;   // é¡¶ç‚¹ç›¸å¯¹ä¸­å¿ƒçš„ XZ åç§»
+    vec2 centerXZ = p.xz - rel;  // æ¨å›ä¸­å¿ƒ
 
-    // ¾¶ÏòÈ¨ÖØ£¨±ßÔµ¸üÃ÷ÏÔ£©
+    // å¾„å‘æƒé‡ï¼ˆè¾¹ç¼˜æ›´æ˜æ˜¾ï¼‰
     float r = clamp(length(tex.xy), 0.0, 1.0);
     float w = r * r;
 
-    // ºáÏòËõ·ÅÒò×Ó
+    // æ¨ªå‘ç¼©æ”¾å› å­
     float s = 1.0 + amp * phase * w;
 
     vec3 outPos = p;
     outPos.x  = centerXZ.x + rel.x * s;
     outPos.z  = centerXZ.y + rel.y * s;
-    outPos.y  = p.y + (-amp * yRatio * phase) * w * halfW * 0.2; // ÇáÎ¢ÉÏÏÂÆğ·ü
+    outPos.y  = p.y + (-amp * yRatio * phase) * w * halfW * 0.2; // è½»å¾®ä¸Šä¸‹èµ·ä¼
     return outPos;
 }
 
-// ÔË¶¯ĞÎ±ä£ºÇ°°ë³ÌÑ¹Ëõ¡¢²à/¶¥Õ¹¿í¡¢ºóÏò¼·Ñ¹£»ºó°ë³Ì»Ö¸´
+// è¿åŠ¨å½¢å˜ï¼šå‰åŠç¨‹å‹ç¼©ã€ä¾§/é¡¶å±•å®½ã€åå‘æŒ¤å‹ï¼›ååŠç¨‹æ¢å¤
 vec3 movingPos(vec3 p, vec2 n2, vec3 tex, vec2 dir, float t) {
-    // ¾²Ö¹»òÎŞ·½Ïò£º²»ĞÎ±ä
+    // é™æ­¢æˆ–æ— æ–¹å‘ï¼šä¸å½¢å˜
     if (t <= 0.0 || t >= 1.0) return p;
     float dlen = length(dir);
     if (dlen < 1e-5) return p;
 
     vec2 ndir = dir / dlen;
 
-    // ¶Ô³ÆÈı½Ç²¨ 0->1->0£¨Ñ¹Ëõ/»Ö¸´£©
+    // å¯¹ç§°ä¸‰è§’æ³¢ 0->1->0ï¼ˆå‹ç¼©/æ¢å¤ï¼‰
     float tri = 1.0 - abs(1.0 - 2.0 * t);
     float k = smoothstep(0.0, 1.0, tri);
 
     float nlen = length(n2);
     vec2 fn = (nlen > 1e-5) ? (n2 / nlen) : vec2(0.0);
-    float backw  = max(0.0, -dot(ndir, fn));                   // ºóÃæ
+    float backw  = max(0.0, -dot(ndir, fn));                   // åé¢
     float sidew  = (nlen > 1e-5) ? max(0.0, 1.0 - abs(dot(ndir, fn))) : 0.0;
-    float topw   = (nlen < 1e-5) ? 1.0 : 0.0;                  // ¶¥/µ×£¨ÎŞXZ·¨Ïß£©
+    float topw   = (nlen < 1e-5) ? 1.0 : 0.0;                  // é¡¶/åº•ï¼ˆæ— XZæ³•çº¿ï¼‰
 
     float halfW = tex.z;
     if (halfW < 1e-6) return p;
@@ -74,15 +74,15 @@ vec3 movingPos(vec3 p, vec2 n2, vec3 tex, vec2 dir, float t) {
     vec2 rel = tex.xy * halfW;
     vec2 centerXZ = p.xz - rel;
 
-    // ¶¥µãÑØÔË¶¯·½ÏòµÄÏà¶ÔÎ»ÖÃ£¨0:ºó -> 1:Ç°£©
+    // é¡¶ç‚¹æ²¿è¿åŠ¨æ–¹å‘çš„ç›¸å¯¹ä½ç½®ï¼ˆ0:å -> 1:å‰ï¼‰
     float along = clamp((dot(ndir, tex.xy) + 1.0) * 0.5, 0.0, 1.0);
     float distFromFront = 1.0 - along;
 
-    // ºóÏòÑ¹Ëõ£¬Ç°Á³±£³Ö²»¶¯
-    float compAmount = 0.15 * k; // ×î´ó 25% halfW
+    // åå‘å‹ç¼©ï¼Œå‰è„¸ä¿æŒä¸åŠ¨
+    float compAmount = 0.15 * k; // æœ€å¤§ 25% halfW
     vec2 shiftBack = ndir * (compAmount * halfW * distFromFront * backw);
 
-    // ²à/¶¥Õ¹¿í£¨ÓëÑ¹ËõÁ¿Ïà¹Ø£©
+    // ä¾§/é¡¶å±•å®½ï¼ˆä¸å‹ç¼©é‡ç›¸å…³ï¼‰
     float widenAmount = 0.10 * k;
     float widenFactor = 1.0 + widenAmount * (sidew + topw);
     vec2 widened = centerXZ + rel * widenFactor;
@@ -93,14 +93,14 @@ vec3 movingPos(vec3 p, vec2 n2, vec3 tex, vec2 dir, float t) {
 }
 
 void main() {
-    // ÏÈÓ¦ÓÃ´ı»úĞÎ±ä
+    // å…ˆåº”ç”¨å¾…æœºå½¢å˜
     vec3 pIdle = idlePos(aPos, aTex, idleT);
-    // ÔÙÓ¦ÓÃÔË¶¯ĞÎ±ä£¨ÈôÔË¶¯ÖĞ£©
+    // å†åº”ç”¨è¿åŠ¨å½¢å˜ï¼ˆè‹¥è¿åŠ¨ä¸­ï¼‰
     vec3 p = movingPos(pIdle, aNormal, aTex, direction, moveT);
 
     FragPos = p;
     
-    // ¼òµ¥·¨Ïß¹ÀËã£º²àÃæÊ¹ÓÃ aNormal£¬¶¥µ×ÃæÄ¬ÈÏÏòÉÏ
+    // ç®€å•æ³•çº¿ä¼°ç®—ï¼šä¾§é¢ä½¿ç”¨ aNormalï¼Œé¡¶åº•é¢é»˜è®¤å‘ä¸Š
     vec3 N = vec3(0.0, 1.0, 0.0);
     if (length(aNormal) > 0.001) {
         N = vec3(aNormal.x, 0.0, aNormal.y);
@@ -108,7 +108,7 @@ void main() {
     Normal = normalize(N);
     
     VertexColor = aColor;
-    TexCoord = vec2(0.0); // ÈíÁ¢·½ÌåÔİÎŞÎÆÀí×ø±ê
+    TexCoord = vec2(0.0); // è½¯ç«‹æ–¹ä½“æš‚æ— çº¹ç†åæ ‡
     FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
 
     gl_Position = projection * view * vec4(p, 1.0);

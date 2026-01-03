@@ -1,4 +1,4 @@
-#ifndef GAME_VIEW_HPP
+﻿#ifndef GAME_VIEW_HPP
 #define GAME_VIEW_HPP
 
 #include <algorithm>

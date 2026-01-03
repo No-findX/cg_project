@@ -1,56 +1,56 @@
-#version 330 core
+ï»¿#version 330 core
  
-// »ù´¡ PBR Æ¬Ôª×ÅÉ«Æ÷£º
-// 1) Ö§³Ö·½Ïò¹â + ¶à¸öµã¹âÔ´£¨×î¶à 4 ¸ö£©
-// 2) Ê¹ÓÃ GGX/NDF + Smith ¼¸ºÎÏî + Schlick ·ÆÄù¶û¼ÆËã¾µÃæ
-// 3) Ö§³ÖÎÆÀíÓë¶¥µãÉ«»ìºÏµÄ·´ÕÕÂÊ£»
-// 4) Ö§³ÖÒõÓ°ÌùÍ¼£¨PCF ²ÉÑù£©£»
-// 5) ×îºó×ö Reinhard É«µ÷Ó³Éä + Ù¤ÂíĞ£Õı¡£
+// åŸºç¡€ PBR ç‰‡å…ƒç€è‰²å™¨ï¼š
+// 1) æ”¯æŒæ–¹å‘å…‰ + å¤šä¸ªç‚¹å…‰æºï¼ˆæœ€å¤š 4 ä¸ªï¼‰
+// 2) ä½¿ç”¨ GGX/NDF + Smith å‡ ä½•é¡¹ + Schlick è²æ¶…å°”è®¡ç®—é•œé¢
+// 3) æ”¯æŒçº¹ç†ä¸é¡¶ç‚¹è‰²æ··åˆçš„åç…§ç‡ï¼›
+// 4) æ”¯æŒé˜´å½±è´´å›¾ï¼ˆPCF é‡‡æ ·ï¼‰ï¼›
+// 5) æœ€ååš Reinhard è‰²è°ƒæ˜ å°„ + ä¼½é©¬æ ¡æ­£ã€‚
  
-out vec4 FragColor;          // Êä³öµ½Ö¡»ºµÄ×îÖÕÑÕÉ«
+out vec4 FragColor;          // è¾“å‡ºåˆ°å¸§ç¼“çš„æœ€ç»ˆé¢œè‰²
  
-// ¶¥µã×ÅÉ«Æ÷²åÖµÊäÈë
-in vec3 FragPos;              // ÊÀ½ç¿Õ¼äÎ»ÖÃ
-in vec3 Normal;               // ÊÀ½ç¿Õ¼ä·¨Ïß
-in vec3 VertexColor;          // ¶¥µãÑÕÉ«£¨ÓëÎÆÀíµ÷ÖÆ£©
-in vec2 TexCoord;             // ÎÆÀí×ø±ê
-in vec4 FragPosLightSpace;    // ¹âÔ´²Ã¼ô¿Õ¼ä×ø±ê£¬ÓÃÓÚÒõÓ°ÌùÍ¼
+// é¡¶ç‚¹ç€è‰²å™¨æ’å€¼è¾“å…¥
+in vec3 FragPos;              // ä¸–ç•Œç©ºé—´ä½ç½®
+in vec3 Normal;               // ä¸–ç•Œç©ºé—´æ³•çº¿
+in vec3 VertexColor;          // é¡¶ç‚¹é¢œè‰²ï¼ˆä¸çº¹ç†è°ƒåˆ¶ï¼‰
+in vec2 TexCoord;             // çº¹ç†åæ ‡
+in vec4 FragPosLightSpace;    // å…‰æºè£å‰ªç©ºé—´åæ ‡ï¼Œç”¨äºé˜´å½±è´´å›¾
  
-// ¹Û²ìÕßÏà¹Ø
-uniform vec3 viewPos;         // ÉãÏñ»úÎ»ÖÃ
+// è§‚å¯Ÿè€…ç›¸å…³
+uniform vec3 viewPos;         // æ‘„åƒæœºä½ç½®
  
-// ·½Ïò¹â²ÎÊı
-uniform vec3 lightDir;        // ·½Ïò¹â·½Ïò£¨´Ó¹âÔ´Ö¸Ïò³¡¾°£©
-uniform vec3 lightColor;      // ·½Ïò¹âÑÕÉ«
-uniform float lightIntensity; // ·½Ïò¹âÇ¿¶È£¨±êÁ¿£©
+// æ–¹å‘å…‰å‚æ•°
+uniform vec3 lightDir;        // æ–¹å‘å…‰æ–¹å‘ï¼ˆä»å…‰æºæŒ‡å‘åœºæ™¯ï¼‰
+uniform vec3 lightColor;      // æ–¹å‘å…‰é¢œè‰²
+uniform float lightIntensity; // æ–¹å‘å…‰å¼ºåº¦ï¼ˆæ ‡é‡ï¼‰
  
-// »·¾³¹â
-uniform vec3 ambientLight;    // »·¾³¹âÑÕÉ«/Ç¿¶È
+// ç¯å¢ƒå…‰
+uniform vec3 ambientLight;    // ç¯å¢ƒå…‰é¢œè‰²/å¼ºåº¦
  
-// µã¹âÔ´²ÎÊı£¨×î¶à 4 ¸ö£©
+// ç‚¹å…‰æºå‚æ•°ï¼ˆæœ€å¤š 4 ä¸ªï¼‰
 #define MAX_POINT_LIGHTS 4
-uniform int numPointLights;                           // ÆôÓÃµÄµã¹âÔ´ÊıÁ¿
-uniform vec3 pointLightPositions[MAX_POINT_LIGHTS];   // µã¹âÔ´Î»ÖÃ
-uniform vec3 pointLightColors[MAX_POINT_LIGHTS];      // µã¹âÔ´ÑÕÉ«
-uniform float pointLightIntensities[MAX_POINT_LIGHTS];// µã¹âÔ´Ç¿¶È
-uniform float pointLightRadii[MAX_POINT_LIGHTS];      // µã¹âÔ´×÷ÓÃ°ë¾¶£¨ÏßĞÔË¥¼õÉÏÏŞ£©
+uniform int numPointLights;                           // å¯ç”¨çš„ç‚¹å…‰æºæ•°é‡
+uniform vec3 pointLightPositions[MAX_POINT_LIGHTS];   // ç‚¹å…‰æºä½ç½®
+uniform vec3 pointLightColors[MAX_POINT_LIGHTS];      // ç‚¹å…‰æºé¢œè‰²
+uniform float pointLightIntensities[MAX_POINT_LIGHTS];// ç‚¹å…‰æºå¼ºåº¦
+uniform float pointLightRadii[MAX_POINT_LIGHTS];      // ç‚¹å…‰æºä½œç”¨åŠå¾„ï¼ˆçº¿æ€§è¡°å‡ä¸Šé™ï¼‰
  
-// PBR ²ÄÖÊ²ÎÊı
-uniform float metallic;       // ½ğÊô¶È [0,1]
-uniform float roughness;      // ´Ö²Ú¶È [0,1]
-uniform float ao;             // »·¾³ÕÚ±Î (Ambient Occlusion)
-uniform sampler2D shadowMap;  // ÒõÓ°Éî¶ÈÌùÍ¼
-uniform sampler2D albedoMap;  // ·´ÕÕÂÊÌùÍ¼
-uniform bool useTexture;      // ÊÇ·ñÆôÓÃÎÆÀí£¨Óë¶¥µãÉ«Ïà³Ë£©
+// PBR æè´¨å‚æ•°
+uniform float metallic;       // é‡‘å±åº¦ [0,1]
+uniform float roughness;      // ç²—ç³™åº¦ [0,1]
+uniform float ao;             // ç¯å¢ƒé®è”½ (Ambient Occlusion)
+uniform sampler2D shadowMap;  // é˜´å½±æ·±åº¦è´´å›¾
+uniform sampler2D albedoMap;  // åç…§ç‡è´´å›¾
+uniform bool useTexture;      // æ˜¯å¦å¯ç”¨çº¹ç†ï¼ˆä¸é¡¶ç‚¹è‰²ç›¸ä¹˜ï¼‰
  
 const float PI = 3.14159265359;
  
-// ·ÆÄù¶û Schlick ½üËÆ
+// è²æ¶…å°” Schlick è¿‘ä¼¼
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
  
-// GGX ·¨Ïß·Ö²¼º¯Êı (NDF)
+// GGX æ³•çº¿åˆ†å¸ƒå‡½æ•° (NDF)
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness * roughness;
     float a2 = a * a;
@@ -62,7 +62,7 @@ float DistributionGGX(vec3 N, vec3 H, float roughness) {
     return nom / denom;
 }
  
-// ¼¸ºÎÏî£ºSmith-Schlick-GGX µ¥±ßÏî
+// å‡ ä½•é¡¹ï¼šSmith-Schlick-GGX å•è¾¹é¡¹
 float GeometrySchlickGGX(float NdotV, float roughness) {
     float r = (roughness + 1.0);
     float k = (r * r) / 8.0;
@@ -71,7 +71,7 @@ float GeometrySchlickGGX(float NdotV, float roughness) {
     return nom / denom;
 }
  
-// ¼¸ºÎÏî£ºÍ¬Ê±¿¼ÂÇÊÓÏßÓë¹âÏßÕÚµ²
+// å‡ ä½•é¡¹ï¼šåŒæ—¶è€ƒè™‘è§†çº¿ä¸å…‰çº¿é®æŒ¡
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     float NdotV = max(dot(N, V), 0.0);
     float NdotL = max(dot(N, L), 0.0);
@@ -80,25 +80,25 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     return ggx1 * ggx2;
 }
  
-// ¼òµ¥µÄÏßĞÔË¥¼õ£¨Æ½·½Ë¥¼õ£©
+// ç®€å•çš„çº¿æ€§è¡°å‡ï¼ˆå¹³æ–¹è¡°å‡ï¼‰
 float calculateAttenuation(float distance, float radius) {
     float atten = clamp(1.0 - distance / radius, 0.0, 1.0);
     return atten * atten;
 }
  
-// ÒõÓ°¼ÆËã£º½«Æ¬ÔªÍ¶Ó°µ½¹âÔ´¿Õ¼ä²¢×ö 3x3 PCF Èí»¯
+// é˜´å½±è®¡ç®—ï¼šå°†ç‰‡å…ƒæŠ•å½±åˆ°å…‰æºç©ºé—´å¹¶åš 3x3 PCF è½¯åŒ–
 float ShadowCalculation(vec4 fragPosLightSpace, vec3 N, vec3 L) {
-    // Í¸ÊÓ³ı·¨µÃµ½±ê×¼»¯×ø±ê
+    // é€è§†é™¤æ³•å¾—åˆ°æ ‡å‡†åŒ–åæ ‡
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    // ×ª»»µ½ [0,1] ·¶Î§
+    // è½¬æ¢åˆ° [0,1] èŒƒå›´
     projCoords = projCoords * 0.5 + 0.5;
-    // ³¬³öÔ¶Æ½ÃæÔò²»ÊÜÒõÓ°Ó°Ïì
+    // è¶…å‡ºè¿œå¹³é¢åˆ™ä¸å—é˜´å½±å½±å“
     if (projCoords.z > 1.0) return 0.0;
-    // ¶¯Ì¬Æ«ÒÆÒÔ¼õÉÙÒõÓ°ğî´¯
+    // åŠ¨æ€åç§»ä»¥å‡å°‘é˜´å½±ç—¤ç–®
     float bias = max(0.001 * (1.0 - dot(N, L)), 0.0005);
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-    // 3x3 PCF ²ÉÑù
+    // 3x3 PCF é‡‡æ ·
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
             float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
@@ -110,21 +110,21 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 N, vec3 L) {
 }
  
 void main() {
-    // 1) ¼ÆËã·´ÕÕÂÊ£º¿ÉÑ¡ÎÆÀí * ¶¥µãÉ«
+    // 1) è®¡ç®—åç…§ç‡ï¼šå¯é€‰çº¹ç† * é¡¶ç‚¹è‰²
     vec3 albedo = VertexColor;
     if (useTexture) {
         vec4 texColor = texture(albedoMap, TexCoord);
-        albedo = texColor.rgb * VertexColor; // Óë¶¥µãÉ«µ÷ÖÆ
+        albedo = texColor.rgb * VertexColor; // ä¸é¡¶ç‚¹è‰²è°ƒåˆ¶
     }
 
-    // 2) »ù´¡ÏòÁ¿
+    // 2) åŸºç¡€å‘é‡
     vec3 N = normalize(Normal);
     vec3 V = normalize(viewPos - FragPos);
-    // ½ğÊô¶È»ìºÏ£º½ğÊôÊ¹ÓÃ×ÔÉí·´ÉäÂÊ£¬·Ç½ğÊôÓÃ 0.04 µÄ³£Á¿ F0
+    // é‡‘å±åº¦æ··åˆï¼šé‡‘å±ä½¿ç”¨è‡ªèº«åå°„ç‡ï¼Œéé‡‘å±ç”¨ 0.04 çš„å¸¸é‡ F0
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 Lo = vec3(0.0);
  
-    // 3) ·½Ïò¹â¼ÆËã£¨º¬ÒõÓ°£©
+    // 3) æ–¹å‘å…‰è®¡ç®—ï¼ˆå«é˜´å½±ï¼‰
     vec3 directionalL = normalize(-lightDir);
     vec3 directionalH = normalize(V + directionalL);
     float dirNDF = DistributionGGX(N, directionalH, roughness);
@@ -133,14 +133,14 @@ void main() {
     vec3 dirSpecular = dirNDF * dirG * dirF;
     float dirDenom = 4.0 * max(dot(N, V), 0.0) * max(dot(N, directionalL), 0.0) + 0.0001;
     dirSpecular /= dirDenom;
-    vec3 dirkS = dirF;                              // ¾µÃæÄÜÁ¿·ÖÅä
-    vec3 dirkD = (vec3(1.0) - dirkS) * (1.0 - metallic); // Âş·´Éä²¿·Ö£¨·Ç½ğÊô²ÅÓĞ£©
+    vec3 dirkS = dirF;                              // é•œé¢èƒ½é‡åˆ†é…
+    vec3 dirkD = (vec3(1.0) - dirkS) * (1.0 - metallic); // æ¼«åå°„éƒ¨åˆ†ï¼ˆéé‡‘å±æ‰æœ‰ï¼‰
     float dirNdotL = max(dot(N, directionalL), 0.0);
     float shadow = ShadowCalculation(FragPosLightSpace, N, directionalL);
     vec3 directionalContribution = (dirkD * albedo / PI + dirSpecular) * lightColor * lightIntensity * dirNdotL;
     Lo += directionalContribution * (1.0 - shadow);
  
-    // 4) µã¹âÔ´Ñ­»·
+    // 4) ç‚¹å…‰æºå¾ªç¯
     for (int i = 0; i < numPointLights; ++i) {
         vec3 lightVec = pointLightPositions[i] - FragPos;
         float distance = length(lightVec);
@@ -162,12 +162,12 @@ void main() {
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
  
-    // 5) »·¾³¹â + ºÏ²¢ + É«µ÷Ó³Éä + Ù¤ÂíĞ£Õı
+    // 5) ç¯å¢ƒå…‰ + åˆå¹¶ + è‰²è°ƒæ˜ å°„ + ä¼½é©¬æ ¡æ­£
     vec3 ambient = ambientLight * albedo * ao;
     vec3 color = ambient + Lo;
     // Reinhard tone mapping
     color = color / (color + vec3(1.0));
-    // Gamma Ğ£Õı (gamma=2.2)
+    // Gamma æ ¡æ­£ (gamma=2.2)
     color = pow(color, vec3(1.0 / 2.2));
     FragColor = vec4(color, 1.0);
 }

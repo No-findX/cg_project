@@ -1,4 +1,4 @@
-#ifndef BUTTON_MANAGER_HPP
+﻿#ifndef BUTTON_MANAGER_HPP
 #define BUTTON_MANAGER_HPP
 
 #include "button.hpp"

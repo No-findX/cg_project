@@ -1,4 +1,4 @@
-#ifndef GAME_VIEW_MODEL_HPP
+﻿#ifndef GAME_VIEW_MODEL_HPP
 #define GAME_VIEW_MODEL_HPP
 
 #include <array>
