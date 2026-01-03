@@ -98,9 +98,9 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
 
-        tileTex_ = loadTexture2D("view/assest/texture/tile.png");
+        tileTex_ = loadTexture2D("view/assest/texture/tile.jpg");
         wallTex_ = loadTexture2D("view/assest/texture/wall.png");
-        boxTex_ = loadTexture2D("view/assest/texture/box.png");
+        boxTex_ = loadTexture2D("view/assest/texture/box.jpg");
 
         // 设置 basicShader_ 的纹理单元
         if (basicShader_) {
@@ -1108,7 +1108,7 @@ private:
         auto drawPlayer = [&]() {
             const Pos& s = state.player;
             const Pos& e = next_state.player;
-            glm::vec3 color(RGB_2_FLT(0xA6D6EA));
+            glm::vec3 color(RGB_2_FLT(0x008B45));
             float height = 0.90f;
 
             float idleT = 0.0f;
@@ -1184,10 +1184,10 @@ private:
     }
 
     glm::vec3 tileColorForCell(const std::string& cell) const {
-        if (cell == "#") return {0.25f, 0.27f, 0.32f};
+        if (cell == "#") return glm::vec3(RGB_2_FLT(0xF4CFE9));
         if (cell == "=") return {0.25f, 0.6f, 0.3f};
         if (cell == "_") return {0.7f, 0.6f, 0.25f};
-        return {0.3f, 0.32f, 0.35f};
+        return {0.9f, 0.9f, 1.0f};
     }
 
     void pushVertex(const glm::vec3& pos, const glm::vec3& color) {

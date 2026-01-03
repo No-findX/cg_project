@@ -110,7 +110,11 @@ void main() {
     float dirNdotL = max(dot(N, directionalL), 0.0);
     float shadow = ShadowCalculation(FragPosLightSpace, N, directionalL);
     vec3 directionalContribution = (dirkD * albedo / PI + dirSpecular) * lightColor * lightIntensity * dirNdotL;
-    Lo += directionalContribution * (1.0 - shadow);
+    float back = max(dot(-N, directionalL), 0.0);
+    vec3 jellyBack = back * albedo * 0.05;
+    directionalContribution += jellyBack * lightColor;
+    float shadowStrength = 0.6;
+    Lo += directionalContribution * (1.0 - shadow * shadowStrength);
  
     for (int i = 0; i < numPointLights; ++i) {
         vec3 lightVec = pointLightPositions[i] - FragPos;
@@ -133,6 +137,8 @@ void main() {
  
     vec3 ambient = ambientLight * albedo * ao;
     vec3 color = ambient + Lo;
+    float rim = pow(1.0 - max(dot(N, V), 0.0), 2.0);
+    color += rim * vec3(1.0) * 0.08;
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0 / 2.2));
     FragColor = vec4(color, 1.0);
