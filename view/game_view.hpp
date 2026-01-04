@@ -473,6 +473,16 @@ public:
         for (const auto portal : portalsList) {
             delete portal;
         }
+        portalsList.clear();
+    }
+
+    void resetCamera() {
+        cameraYaw_ = 0.0f;
+        rotateTargetYaw_ = 0.0f;
+        rotating_ = false;
+        moving_ = false;
+        cameraPosition_ = glm::vec3(0.0f, 3.0f, 0.0f);
+        objThroughPortalData = ObjThroughPortal();
     }
 
     // Handle resize: update stored scr params of portals and update projection matrix
@@ -1453,16 +1463,17 @@ private:
                 return true;
             }
             if (camerayaw <= 45.0f || camerayaw >= 315.0f) {
-                return ( wallMaxX <= camX ) || ( wallMinX - 1.0f <= camX );
+                return ((( wallMaxX <= camX ) || ( wallMinX - 1.0f <= camX )) && ( wallMinZ <= camZ + 1.0f && wallMaxZ >= camZ -1.0f ));
             } else if (camerayaw > 45.0f && camerayaw <= 135.0f) {
-                return ( wallMaxZ <= camZ ) || ( wallMinZ - 1.0f <= camZ );
+                return ((( wallMaxZ <= camZ ) || ( wallMinZ - 1.0f <= camZ )) && (wallMinX <= camX + 1.0f && wallMaxX >= camX - 1.0f));
             } else if (camerayaw > 135.0f && camerayaw <= 225.0f) {
-                return (wallMinX >= camX) || (wallMaxX + 1.0f >= camX);
+                return (((wallMinX >= camX) || (wallMaxX + 1.0f >= camX)) && (wallMinZ <= camZ + 1.0f && wallMaxZ >= camZ - 1.0f));
             } else {
-                return (wallMinZ >= camZ) || (wallMaxZ + 1.0f >= camZ);
+                return (((wallMinZ >= camZ) || (wallMaxZ + 1.0f >= camZ)) && (wallMinX <= camX + 1.0f && wallMaxX >= camX - 1.0f));
 			}
 		};
 
+        //std::cout << cameraYaw_ << std::endl;
         for (int y = 0; y < tileCount; ++y) {
             for (int x = 0; x < tileCount; ++x) {
                 auto bounds = boundsForCell(x, y);
@@ -1470,11 +1481,15 @@ private:
                 appendFloor(floorVertexData_, bounds[0], bounds[1], bounds[2], bounds[3], baseColor);
                 glm::vec3 camPos = cameraPosition_;
 
-                if (room.scene[y][x] == "#" && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
-                    if (windowMap[y][x]) {
+                if (room.scene[y][x] == "#") {
+                    if (windowMap[y][x] && !camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3])) {
                         appendWindowWall(wallVertexData_, x, y, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
                     } else {
-                        appendWallPart(wallVertexData_, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                        if (!camera_in_wall(bounds[0], bounds[1], bounds[2], bounds[3]))
+                            appendWallPart(wallVertexData_, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, wallHeight_, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                        else {
+                            appendWallPart(wallVertexData_, bounds[0], bounds[1], bounds[2], bounds[3], 0.0f, 1.0f, glm::vec3(RGB_2_FLT(0xF4CFE9)));
+                        }
                     }
                 } else if (room.scene[y][x] == "|") {
                     appendChair(x, y);
@@ -1597,10 +1612,10 @@ private:
                     // Calculate "supposedly" position before exiting pairPortal (of sPortal) and draw the box
                     int dxe = 0, dye = 0;
                     switch (objThroughPortalData.portal->pairPortal->relativePos) {
-                        case XPos: dxe = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
-                        case XNeg: dxe = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
-                        case ZPos: dye = objThroughPortalData.portal->pairPortal->stationary ? -1 : 1; break;
-                        case ZNeg: dye = objThroughPortalData.portal->pairPortal->stationary ? 1 : -1; break;
+                        case XPos: dxe = sPortal->pairPortal->stationary ? 1 : -1; break;
+                        case XNeg: dxe = sPortal->pairPortal->stationary ? -1 : 1; break;
+                        case ZPos: dye = sPortal->pairPortal->stationary ? -1 : 1; break;
+                        case ZNeg: dye = sPortal->pairPortal->stationary ? 1 : -1; break;
                     }
 
                     glm::vec2 ceNow = centerForCell(e.x + dxe, e.y + dye);
@@ -2276,6 +2291,13 @@ public:
         }
     }
 
+    // New: switch level logic
+    void switchLevel() {
+        if (!initialized_) return;
+        renderer_.clearPortals();
+        renderer_.resetCamera();
+    }
+
     // New: register portals from level
     /// @brief Register portals from loaded level & initial state
     /// @details Create portals using input level, initial state and other info, call once after loading a new level
@@ -2321,21 +2343,18 @@ public:
         else if (key == GLFW_KEY_I) renderer_.rotateCameraBy90(false, 0.5);
     }
 
+    bool isCameraRotating() const {
+        return renderer_.isRotating();
+    }
+
+    void beginMoveAnimation(float duration, Input input) {
+        renderer_.beginMoveAnimation(duration, input);
+    }
+
     // Call from GLFW fb resize callback
     void handleResize(int width, int height) {
         renderer_.handleResize(width, height);
         uiManager_.handleResize(width, height);
-    }
-
-    // 新增：由应用层启动位移动画
-    void beginMoveAnimation(float duration, Input input) {
-        if (!showGameScene_) return;
-        renderer_.beginMoveAnimation(duration, input);
-    }
-
-    // 新增：查询相机是否处于旋转中（用于输入加锁）
-    bool isCameraRotating() const {
-        return renderer_.isRotating();
     }
 
 private:

@@ -20,8 +20,8 @@ public:
     /// Attempt to locate and load the default level file by probing several folders.
     bool loadDefaultLevel() {
         static const std::array<std::string, 2> relativeCandidates = {
-            "levels/l2.json",
-            "model/levels/l2.json"
+            "levels/l1.json",
+            "model/levels/l1.json"
         };
 
         auto tryLoadFromBase = [&](const std::filesystem::path& base) {
