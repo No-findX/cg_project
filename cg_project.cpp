@@ -33,6 +33,8 @@ private:
     // Window resize processing
     void onResize(int width, int height);
 
+    void switchLevel();
+
     static void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
     static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
     static void WindowResizeCallback(GLFWwindow* window, int width, int height);
@@ -304,6 +306,7 @@ void GameApplication::update() {
         if (isWin && !winAnnounced_) {
             std::cout << "You won the level!" << std::endl;
             winAnnounced_ = true;
+            switchLevel();
         } else if (!isWin && winAnnounced_) {
             winAnnounced_ = false;
         }
@@ -420,6 +423,42 @@ void GameApplication::WindowResizeCallback(GLFWwindow* window, int width, int he
     }
     if (auto* app = static_cast<GameApplication*>(glfwGetWindowUserPointer(window))) {
         app->onResize(fbw, fbh);
+    }
+}
+
+void GameApplication::switchLevel() {
+    // 1. Clean up old resources in View
+    view_.switchLevel();
+
+    // 2. Reset critical OpenGL state to default (simulate fresh start)
+    // This prevents residual portal textures or FBO bindings from affecting the next frame
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glUseProgram(0);
+    glDisable(GL_SCISSOR_TEST); // Just in case portals used scissor test
+    glViewport(0, 0, windowWidth_, windowHeight_);
+
+    // 3. Load next level data
+    if (viewModel_.loadNextLevel()) {
+        std::cout << "Level switched successfully!" << std::endl;
+        
+        // 4. Initialize View resources for the new level
+        view_.registerPortals(viewModel_.getState(), viewModel_.getLevel());
+
+        // 5. Reset loop state
+        winAnnounced_ = false;
+        animatingMove_ = false;
+        hasPendingInput_ = false; 
+        hasCachedState_ = false;
+
+        // Force a clear to remove any artifacts
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
+    else {
+        std::cout << "No more levels or load failed!" << std::endl;
+        gameStarted_ = false;
+        view_.setGameSceneVisible(false);
     }
 }
 

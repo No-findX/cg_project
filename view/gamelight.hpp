@@ -157,6 +157,10 @@ public:
         // 默认塑料材质
         return PBRMaterial(baseColor, 0.0f, 0.5f, 1.0f);
     }
+
+    void reset() {
+        setupDefaultLighting();
+    }
     
 private:
     DirectionalLight mainLight_;

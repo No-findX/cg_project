@@ -146,6 +146,30 @@ public:
         
     }
 
+    void resetLevelState() {
+        if (lightingSystem_) {
+            lightingSystem_->reset();
+        }
+        else {
+            lightingSystem_ = std::make_unique<LabLightingSystem>();
+        }
+
+        loadedObjs.clear();
+
+        vertexData_.clear();
+        floorVertexData_.clear();
+        wallVertexData_.clear();
+        boxVertexData_.clear();
+        softVertexData_.clear();
+        objThroughPortalData = ObjThroughPortal();
+        moveDirection_ = glm::vec2(0.0f);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
     // no-op: remove mouse-drag free rotation for 2.5D style
     void rotateCamera(float /*deltaX*/, float /*deltaY*/) {
     }
@@ -485,6 +509,7 @@ public:
         objThroughPortalData = ObjThroughPortal();
     }
 
+
     // Handle resize: update stored scr params of portals and update projection matrix
     void handleResize(int width, int height) {
         // 1. Change member var.s
@@ -612,9 +637,14 @@ private:
  
     glm::mat4 calculateLightSpaceMatrix(const glm::vec3& roomCenter, float halfExtent) const {
         float orthoRange = halfExtent + 4.0f;
-        glm::mat4 lightProjection = glm::ortho(-orthoRange, orthoRange, -orthoRange, orthoRange, 0.1f, 50.0f);
+        float lightDistance = std::max(20.0f, orthoRange * 2.0f);
+        float zFar = lightDistance + orthoRange * 2.0f;
+
+        glm::mat4 lightProjection = glm::ortho(-orthoRange, orthoRange, -orthoRange, orthoRange, 0.1f, zFar);
+
         glm::vec3 lightDir = glm::normalize(lightingSystem_->getMainLight().direction);
-        glm::vec3 lightPos = roomCenter - lightDir * 20.0f; // 从远处光源位置进行正交投影
+        glm::vec3 lightPos = roomCenter - lightDir * lightDistance; // 使用动态距离
+
         glm::mat4 lightView = glm::lookAt(lightPos, roomCenter, glm::vec3(0.0f, 1.0f, 0.0f));
         return lightProjection * lightView;
     }
@@ -2295,6 +2325,7 @@ public:
     void switchLevel() {
         if (!initialized_) return;
         renderer_.clearPortals();
+        renderer_.resetLevelState(); // Add this call
         renderer_.resetCamera();
     }
 
